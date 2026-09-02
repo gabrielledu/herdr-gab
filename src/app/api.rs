@@ -429,14 +429,21 @@ impl App {
     }
 
     fn runtime_exit_action(&self, pane_id: crate::layout::PaneId) -> RuntimeExitAction {
-        let Some((_, pane_state)) = self.find_pane(pane_id) else {
+        let Some((ws_idx, pane_state)) = self.find_pane(pane_id) else {
             return RuntimeExitAction::ClosePane;
         };
         let Some(terminal) = self.state.terminals.get(&pane_state.attached_terminal_id) else {
             return RuntimeExitAction::ClosePane;
         };
 
-        if terminal.respawn_shell_on_exit || self.should_respawn_shell_after_agent_exit(terminal) {
+        // ui.keep_empty_workspaces: the last pane of a workspace never takes the
+        // workspace down with it; a fresh shell replaces the exited process.
+        let keeps_workspace_alive = self.state.keep_empty_workspaces
+            && self.state.close_pane_would_close_workspace(ws_idx, pane_id);
+        if terminal.respawn_shell_on_exit
+            || keeps_workspace_alive
+            || self.should_respawn_shell_after_agent_exit(terminal)
+        {
             RuntimeExitAction::RespawnShell
         } else {
             RuntimeExitAction::ClosePane
@@ -2094,6 +2101,52 @@ mod tests {
         assert_eq!(tab.layout.focused(), previous_focus);
         assert!(!tab.zoomed);
         assert!(app.overlay_panes.is_empty());
+    }
+
+    #[tokio::test]
+    async fn pane_died_keeps_workspace_when_keep_empty_workspaces_is_on() {
+        let (_api_tx, api_rx) = tokio::sync::mpsc::unbounded_channel();
+        let mut app = App::new(
+            &crate::config::Config::default(),
+            crate::app::AppPolicy::TEST,
+            None,
+            api_rx,
+            crate::api::EventHub::default(),
+        );
+        app.state.keep_empty_workspaces = true;
+        let workspace = crate::workspace::Workspace::test_new("kept");
+        let pane_id = workspace.tabs[0].root_pane;
+        app.state.workspaces = vec![workspace];
+        app.state.ensure_test_terminals();
+
+        app.handle_internal_event(AppEvent::PaneDied { pane_id });
+
+        assert_eq!(app.state.workspaces.len(), 1, "last pane exit must not close the workspace");
+        assert!(app.find_pane(pane_id).is_some(), "the pane stays attached with a fresh shell");
+
+        for (_, runtime) in app.terminal_runtimes.drain() {
+            runtime.shutdown();
+        }
+    }
+
+    #[tokio::test]
+    async fn pane_died_closes_workspace_when_keep_empty_workspaces_is_off() {
+        let (_api_tx, api_rx) = tokio::sync::mpsc::unbounded_channel();
+        let mut app = App::new(
+            &crate::config::Config::default(),
+            crate::app::AppPolicy::TEST,
+            None,
+            api_rx,
+            crate::api::EventHub::default(),
+        );
+        let workspace = crate::workspace::Workspace::test_new("gone");
+        let pane_id = workspace.tabs[0].root_pane;
+        app.state.workspaces = vec![workspace];
+        app.state.ensure_test_terminals();
+
+        app.handle_internal_event(AppEvent::PaneDied { pane_id });
+
+        assert!(app.state.workspaces.is_empty(), "default keeps upstream behavior");
     }
 
     #[tokio::test]

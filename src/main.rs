@@ -274,6 +274,10 @@ const DEFAULT_CONFIG: &str = r##"# herdr configuration
 # Ask for confirmation before closing a workspace
 # confirm_close = true
 
+# Keep a workspace open when its last pane's process exits: a fresh shell
+# replaces it instead of closing the workspace.
+# keep_empty_workspaces = false
+
 # Ask for a tab name before creating a new tab.
 # Set false to create tabs immediately with generated names.
 # prompt_new_tab_name = true

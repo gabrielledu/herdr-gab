@@ -481,6 +481,7 @@ impl App {
             sidebar_spaces: config.ui.sidebar.spaces.clone(),
             next_agent_state_change_seq: 0,
             confirm_close: config.ui.confirm_close,
+            keep_empty_workspaces: config.ui.keep_empty_workspaces,
             pane_borders: config.ui.pane_borders,
             pane_outer_borders: config.ui.pane_outer_borders,
             pane_scrollbars: config.ui.pane_scrollbars,
@@ -817,6 +818,7 @@ impl App {
 
                 self.loaded_host_cursor = config.ui.host_cursor;
                 self.state.confirm_close = config.ui.confirm_close;
+                self.state.keep_empty_workspaces = config.ui.keep_empty_workspaces;
                 self.state.pane_borders = config.ui.pane_borders;
                 self.state.pane_outer_borders = config.ui.pane_outer_borders;
                 self.state.pane_scrollbars = config.ui.pane_scrollbars;
