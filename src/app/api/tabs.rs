@@ -213,10 +213,41 @@ impl App {
         encode_success(id, ResponseResult::TabList { tabs })
     }
 
+    /// ui.keep_empty_workspaces: before an explicit close takes the last tab or
+    /// pane of a workspace, open a fresh shell tab at the workspace root so the
+    /// workspace survives. Returns true when the replacement tab exists.
+    pub(super) fn keep_workspace_with_fresh_tab(&mut self, ws_idx: usize) -> bool {
+        let Some(ws) = self.state.workspaces.get(ws_idx) else {
+            return false;
+        };
+        let tabs_before = ws.tabs.len();
+        let params = TabCreateParams {
+            workspace_id: Some(ws.id.clone()),
+            cwd: Some(ws.identity_cwd.display().to_string()),
+            focus: true,
+            label: None,
+            env: Default::default(),
+        };
+        self.handle_tab_create("keep-empty-workspace".into(), params);
+        self.state
+            .workspaces
+            .get(ws_idx)
+            .is_some_and(|ws| ws.tabs.len() > tabs_before)
+    }
+
     pub(super) fn handle_tab_close(&mut self, id: String, target: TabTarget) -> String {
         let Some((ws_idx, tab_idx)) = self.parse_tab_id(&target.tab_id) else {
             return tab_not_found(id, &target.tab_id);
         };
+        if self.state.keep_empty_workspaces
+            && self
+                .state
+                .workspaces
+                .get(ws_idx)
+                .is_some_and(|ws| ws.tabs.len() <= 1)
+        {
+            self.keep_workspace_with_fresh_tab(ws_idx);
+        }
         let Some(tab_id) = self.public_tab_id(ws_idx, tab_idx) else {
             return tab_not_found(id, &target.tab_id);
         };
