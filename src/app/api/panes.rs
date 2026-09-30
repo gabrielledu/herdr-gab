@@ -1858,6 +1858,11 @@ impl App {
             return Err(pane_not_found(id, &target.pane_id));
         };
         let workspace_id = self.public_workspace_id(ws_idx);
+        if self.state.keep_empty_workspaces
+            && self.state.close_pane_would_close_workspace(ws_idx, pane_id)
+        {
+            self.keep_workspace_with_fresh_tab(ws_idx);
+        }
         let layout_update_target = self.layout_update_target_after_pane_removal(ws_idx, pane_id);
         if self.state.close_pane_would_close_workspace(ws_idx, pane_id)
             && self.state.confirm_implicit_worktree_group_close(ws_idx)

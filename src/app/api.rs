@@ -1259,6 +1259,7 @@ pub(super) mod test_support {
 mod tests {
     use super::*;
     use crate::detect::{Agent, AgentState};
+    use crate::api::schema::{PaneTarget, TabTarget};
 
     #[cfg(unix)]
     fn init_repo(path: &std::path::Path) {
@@ -2123,6 +2124,61 @@ mod tests {
 
         assert_eq!(app.state.workspaces.len(), 1, "last pane exit must not close the workspace");
         assert!(app.find_pane(pane_id).is_some(), "the pane stays attached with a fresh shell");
+
+        for (_, runtime) in app.terminal_runtimes.drain() {
+            runtime.shutdown();
+        }
+    }
+
+    fn keep_empty_test_app() -> (App, crate::layout::PaneId) {
+        let (_api_tx, api_rx) = tokio::sync::mpsc::unbounded_channel();
+        let mut app = App::new(
+            &crate::config::Config::default(),
+            crate::app::AppPolicy::TEST,
+            None,
+            api_rx,
+            crate::api::EventHub::default(),
+        );
+        app.state.keep_empty_workspaces = true;
+        let mut workspace = crate::workspace::Workspace::test_new("kept");
+        workspace.identity_cwd = std::env::temp_dir();
+        let pane_id = workspace.tabs[0].root_pane;
+        app.state.workspaces = vec![workspace];
+        app.state.active = Some(0);
+        app.state.ensure_test_terminals();
+        (app, pane_id)
+    }
+
+    #[tokio::test]
+    async fn closing_last_tab_keeps_workspace_when_keep_empty_workspaces_is_on() {
+        let (mut app, pane_id) = keep_empty_test_app();
+        let tab_id = app.public_tab_id(0, 0).unwrap();
+
+        let response = app.handle_tab_close("t".into(), TabTarget { tab_id });
+
+        assert!(!response.contains("\"error\""), "{response}");
+        assert_eq!(app.state.workspaces.len(), 1, "closing the last tab must not close the workspace");
+        assert_eq!(app.state.workspaces[0].tabs.len(), 1, "a fresh tab replaces the closed one");
+        assert!(app.find_pane(pane_id).is_none(), "the closed tab's pane is gone");
+
+        for (_, runtime) in app.terminal_runtimes.drain() {
+            runtime.shutdown();
+        }
+    }
+
+    #[tokio::test]
+    async fn closing_last_pane_keeps_workspace_when_keep_empty_workspaces_is_on() {
+        let (mut app, pane_id) = keep_empty_test_app();
+        let target = PaneTarget {
+            pane_id: app.public_pane_id(0, pane_id).unwrap(),
+        };
+
+        let response = app.handle_pane_close("p".into(), target);
+
+        assert!(!response.contains("\"error\""), "{response}");
+        assert_eq!(app.state.workspaces.len(), 1, "closing the last pane must not close the workspace");
+        assert_eq!(app.state.workspaces[0].tabs.len(), 1, "a fresh tab replaces the closed one");
+        assert!(app.find_pane(pane_id).is_none(), "the closed pane is gone");
 
         for (_, runtime) in app.terminal_runtimes.drain() {
             runtime.shutdown();
