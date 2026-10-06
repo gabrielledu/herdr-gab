@@ -62,9 +62,9 @@ impl App {
         } else {
             return encode_error(id, "workspace_not_found", "no active workspace");
         };
-        let cwd = cwd.map(PathBuf::from).unwrap_or_else(|| {
-            self.resolve_new_terminal_cwd(self.focused_pane_cwd_in_workspace(ws_idx))
-        });
+        let cwd = cwd
+            .map(PathBuf::from)
+            .unwrap_or_else(|| self.new_tab_cwd_in_workspace(ws_idx));
         let (rows, cols) = self.state.estimate_pane_size();
         let default_shell = self.state.default_shell.clone();
         let scrollback_limit_bytes = self.state.pane_scrollback_limit_bytes;
@@ -502,6 +502,59 @@ mod tests {
             crate::worktree::canonical_or_original(created_cwd),
             crate::worktree::canonical_or_original(&cached_cwd)
         );
+        shutdown_test_runtimes(&mut app);
+    }
+
+    #[tokio::test]
+    async fn tab_create_with_workspace_policy_uses_workspace_base_folder() {
+        let event_hub = crate::api::EventHub::default();
+        let (_api_tx, api_rx) = tokio::sync::mpsc::unbounded_channel();
+        let mut app = App::new(
+            &Config::default(),
+            crate::app::AppPolicy::TEST,
+            None,
+            api_rx,
+            event_hub,
+        );
+        app.state.default_shell = exiting_test_command().into();
+        app.state.shell_mode = ShellModeConfig::NonLogin;
+        app.state.new_terminal_cwd = crate::config::NewTerminalCwdConfig::Workspace;
+        let base = std::env::temp_dir().join("herdr-workspace-base");
+        std::fs::create_dir_all(&base).unwrap();
+        let mut workspace = Workspace::test_new("tabs");
+        workspace.identity_cwd = base.clone();
+        let focused_pane = workspace.tabs[0].root_pane;
+        app.state.workspaces = vec![workspace];
+        app.state.active = Some(0);
+        app.state.selected = 0;
+        app.state.ensure_test_terminals();
+        let terminal_id = app.state.workspaces[0]
+            .terminal_id(focused_pane)
+            .cloned()
+            .unwrap();
+        app.state.terminals.get_mut(&terminal_id).unwrap().cwd = std::env::temp_dir();
+
+        let response = app.handle_tab_create(
+            "req".into(),
+            TabCreateParams {
+                workspace_id: None,
+                cwd: None,
+                focus: false,
+                label: None,
+                env: Default::default(),
+            },
+        );
+
+        let success: SuccessResponse = serde_json::from_str(&response).unwrap();
+        assert!(matches!(success.result, ResponseResult::TabCreated { .. }));
+        let created = &app.state.workspaces[0].tabs[1];
+        let created_terminal_id = created.terminal_id(created.root_pane).unwrap();
+        let created_cwd = &app.state.terminals.get(created_terminal_id).unwrap().cwd;
+        assert_eq!(
+            crate::worktree::canonical_or_original(created_cwd),
+            crate::worktree::canonical_or_original(&base)
+        );
+        assert_eq!(app.workspace_info(0).cwd, base.display().to_string());
         shutdown_test_runtimes(&mut app);
     }
 }

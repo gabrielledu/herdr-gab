@@ -297,15 +297,13 @@ fn capture_workspace(
         .iter()
         .map(|tab| capture_tab(tab, terminals, terminal_runtimes))
         .collect();
-    let identity_cwd = tabs
-        .first()
-        .and_then(|tab| tab.root_pane.and_then(|id| tab.panes.get(&id)))
-        .map(|pane| pane.cwd.clone())
-        .unwrap_or_else(|| ws.identity_cwd.clone());
     WorkspaceSnapshot {
         id: Some(ws.id.clone()),
         custom_name: ws.custom_name.clone(),
-        identity_cwd,
+        // The base folder is fixed at creation. Deriving it from the first pane
+        // let a session started elsewhere (e.g. the repo root) move the whole
+        // workspace there on every restart or live handoff.
+        identity_cwd: ws.identity_cwd.clone(),
         worktree_space: ws.worktree_space.clone(),
         public_pane_numbers: ws
             .public_pane_numbers
@@ -876,6 +874,24 @@ mod tests {
     }
 
     #[test]
+    fn capture_keeps_workspace_base_folder_when_first_pane_moved() {
+        let mut state = state_with_workspaces(&["client"]);
+        state.workspaces[0].identity_cwd = PathBuf::from("/repo/services/client");
+        let root = state.workspaces[0].tabs[0].root_pane;
+        let terminal_id = state.workspaces[0].tabs[0].panes[&root]
+            .attached_terminal_id
+            .clone();
+        state.terminals.get_mut(&terminal_id).unwrap().cwd = PathBuf::from("/repo");
+
+        let snapshot = capture_from_state(&state);
+
+        assert_eq!(
+            snapshot.workspaces[0].identity_cwd,
+            PathBuf::from("/repo/services/client")
+        );
+    }
+
+    #[test]
     fn capture_contract_tracks_workspace_order_active_and_selected() {
         let mut state = state_with_workspaces(&["a", "b", "c"]);
         state.active = Some(1);
@@ -1134,7 +1150,8 @@ mod tests {
                 .cwd,
             new
         );
-        assert_eq!(before.workspaces[0].identity_cwd, new);
+        // herdr-gab: the workspace base folder stays as created; only pane cwds follow.
+        assert_eq!(before.workspaces[0].identity_cwd, old);
         assert_eq!(runtimes.values().next().unwrap().cwd(), Some(old.clone()));
         crate::platform::signal_processes(&[pid], crate::platform::Signal::Kill);
         let exit_deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
@@ -1154,7 +1171,7 @@ mod tests {
                 .cwd,
             new
         );
-        assert_eq!(after.workspaces[0].identity_cwd, new);
+        assert_eq!(after.workspaces[0].identity_cwd, old);
         assert_eq!(runtimes.values().next().unwrap().cwd(), Some(old));
         for (_, runtime) in runtimes.drain() {
             runtime.shutdown();
