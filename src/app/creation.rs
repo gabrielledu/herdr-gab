@@ -12,7 +12,7 @@ pub(crate) fn resolve_new_terminal_cwd(
     follow_cwd: Option<PathBuf>,
 ) -> PathBuf {
     match policy {
-        NewTerminalCwdConfig::Follow => follow_cwd
+        NewTerminalCwdConfig::Follow | NewTerminalCwdConfig::Workspace => follow_cwd
             .or_else(|| std::env::var_os("HOME").map(PathBuf::from))
             .or_else(|| std::env::current_dir().ok())
             .unwrap_or_else(|| PathBuf::from("/")),
@@ -76,6 +76,18 @@ impl App {
 
     pub(super) fn resolve_new_terminal_cwd(&self, follow_cwd: Option<PathBuf>) -> PathBuf {
         resolve_new_terminal_cwd(&self.state.new_terminal_cwd, follow_cwd)
+    }
+
+    /// CWD for a new tab without an explicit one. With `new_cwd = "workspace"`
+    /// it is the workspace base folder, so a tab never inherits the folder of
+    /// whatever pane happens to be focused.
+    pub(super) fn new_tab_cwd_in_workspace(&self, ws_idx: usize) -> PathBuf {
+        if self.state.new_terminal_cwd == NewTerminalCwdConfig::Workspace {
+            if let Some(ws) = self.state.workspaces.get(ws_idx) {
+                return ws.identity_cwd.clone();
+            }
+        }
+        self.resolve_new_terminal_cwd(self.focused_pane_cwd_in_workspace(ws_idx))
     }
 
     pub(crate) fn resolved_new_workspace_cwd_from(&self, ws_idx: usize) -> PathBuf {
@@ -389,6 +401,7 @@ impl App {
                 crate::workspace::public_tab_id_for_number(&ws.id, ws.active_tab + 1)
             }),
             agent_status: pane_agent_status(agg_state, seen),
+            cwd: ws.identity_cwd.display().to_string(),
             tokens: ws.metadata_tokens.values(),
             worktree: ws
                 .worktree_space()

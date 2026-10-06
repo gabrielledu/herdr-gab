@@ -68,6 +68,10 @@ pub struct WorkspaceInfo {
     pub tab_count: usize,
     pub active_tab_id: String,
     pub agent_status: AgentStatus,
+    /// Workspace base folder: where it was created and where new tabs start
+    /// with `terminal.new_cwd = "workspace"`.
+    #[serde(default)]
+    pub cwd: String,
     #[serde(default, skip_serializing_if = "HashMap::is_empty")]
     #[schemars(schema_with = "super::common::metadata_token_values_schema")]
     pub tokens: HashMap<String, String>,

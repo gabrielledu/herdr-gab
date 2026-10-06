@@ -284,9 +284,10 @@ fn capture_workspace(
     WorkspaceSnapshot {
         id: Some(ws.id.clone()),
         custom_name: ws.custom_name.clone(),
-        identity_cwd: ws
-            .resolved_identity_cwd_from(terminals, terminal_runtimes)
-            .unwrap_or_else(|| ws.identity_cwd.clone()),
+        // The base folder is fixed at creation. Deriving it from the first pane
+        // let a session started elsewhere (e.g. the repo root) move the whole
+        // workspace there on every restart or live handoff.
+        identity_cwd: ws.identity_cwd.clone(),
         worktree_space: ws.worktree_space.clone(),
         public_pane_numbers: ws
             .public_pane_numbers
@@ -807,6 +808,24 @@ mod tests {
         assert_eq!(ws.tabs[0].root_pane, Some(0));
         assert_eq!(ws.tabs[0].panes[&0].cwd, PathBuf::from("/tmp/pion"));
         assert_eq!(ws.tabs[0].panes[&1].cwd, PathBuf::from("/tmp/herdr"));
+    }
+
+    #[test]
+    fn capture_keeps_workspace_base_folder_when_first_pane_moved() {
+        let mut state = state_with_workspaces(&["client"]);
+        state.workspaces[0].identity_cwd = PathBuf::from("/repo/services/client");
+        let root = state.workspaces[0].tabs[0].root_pane;
+        let terminal_id = state.workspaces[0].tabs[0].panes[&root]
+            .attached_terminal_id
+            .clone();
+        state.terminals.get_mut(&terminal_id).unwrap().cwd = PathBuf::from("/repo");
+
+        let snapshot = capture_from_state(&state);
+
+        assert_eq!(
+            snapshot.workspaces[0].identity_cwd,
+            PathBuf::from("/repo/services/client")
+        );
     }
 
     #[test]

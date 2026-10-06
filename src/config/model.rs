@@ -222,6 +222,9 @@ pub enum NewTerminalCwdConfig {
     Follow,
     Home,
     Current,
+    /// New tabs start in the workspace base folder (`identity_cwd`); new panes
+    /// and workspaces follow the focused pane, like `Follow`.
+    Workspace,
     Path(String),
 }
 
@@ -235,6 +238,7 @@ impl<'de> Deserialize<'de> for NewTerminalCwdConfig {
             "" | "follow" => Ok(Self::Follow),
             "home" => Ok(Self::Home),
             "current" => Ok(Self::Current),
+            "workspace" => Ok(Self::Workspace),
             _ => Ok(Self::Path(value)),
         }
     }
@@ -1316,6 +1320,15 @@ new_cwd = "home"
         )
         .unwrap();
         assert_eq!(config.terminal.new_cwd, NewTerminalCwdConfig::Home);
+
+        let config: Config = toml::from_str(
+            r#"
+[terminal]
+new_cwd = "workspace"
+"#,
+        )
+        .unwrap();
+        assert_eq!(config.terminal.new_cwd, NewTerminalCwdConfig::Workspace);
 
         let config: Config = toml::from_str(
             r#"
