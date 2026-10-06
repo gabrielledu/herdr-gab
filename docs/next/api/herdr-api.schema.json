@@ -1076,6 +1076,11 @@
             "agent_status": {
               "$ref": "#/schemas/event/$defs/AgentStatus"
             },
+            "cwd": {
+              "default": "",
+              "description": "Workspace base folder: where it was created and where new tabs start\nwith `terminal.new_cwd = \"workspace\"`.",
+              "type": "string"
+            },
             "focused": {
               "type": "boolean"
             },
@@ -10619,6 +10624,11 @@
             },
             "agent_status": {
               "$ref": "#/schemas/success_response/$defs/AgentStatus"
+            },
+            "cwd": {
+              "default": "",
+              "description": "Workspace base folder: where it was created and where new tabs start\nwith `terminal.new_cwd = \"workspace\"`.",
+              "type": "string"
             },
             "focused": {
               "type": "boolean"
