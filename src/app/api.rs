@@ -2167,6 +2167,39 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn moving_last_pane_to_another_workspace_keeps_workspace_when_keep_empty_workspaces_is_on() {
+        let (mut app, pane_id) = keep_empty_test_app();
+        let mut other = crate::workspace::Workspace::test_new("other");
+        other.identity_cwd = std::env::temp_dir();
+        app.state.workspaces.push(other);
+        app.state.ensure_test_terminals();
+        let source = app.public_pane_id(0, pane_id).unwrap();
+        let target_workspace_id = app.public_workspace_id(1);
+
+        let response = app.handle_pane_move(
+            "m".into(),
+            crate::api::schema::PaneMoveParams {
+                pane_id: source,
+                destination: crate::api::schema::PaneMoveDestination::NewTab {
+                    workspace_id: Some(target_workspace_id),
+                    label: None,
+                },
+                focus: false,
+            },
+        );
+
+        assert!(!response.contains("\"error\""), "{response}");
+        assert_eq!(app.state.workspaces.len(), 2, "the source workspace must survive the move");
+        assert_eq!(app.state.workspaces[0].tabs.len(), 1, "a fresh tab replaces the moved pane");
+        assert_eq!(app.state.workspaces[1].tabs.len(), 2, "the pane arrives as its own tab");
+        assert_eq!(app.state.active, Some(0), "the viewer is not pulled away");
+
+        for (_, runtime) in app.terminal_runtimes.drain() {
+            runtime.shutdown();
+        }
+    }
+
+    #[tokio::test]
     async fn closing_last_pane_keeps_workspace_when_keep_empty_workspaces_is_on() {
         let (mut app, pane_id) = keep_empty_test_app();
         let target = PaneTarget {

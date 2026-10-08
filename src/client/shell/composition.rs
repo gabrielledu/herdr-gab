@@ -354,6 +354,30 @@ impl ClientShellState {
             );
             frame.replace_from_ratatui_buffer_preserving_effects(&composed, cursor);
         }
+        if let Some(ClientChromeDrag::Agent {
+            pane_id,
+            label,
+            point,
+            target,
+        }) = self.chrome_drag.as_ref()
+        {
+            let other_space = snapshot.panes.iter().any(|pane| {
+                pane.pane_id == *pane_id
+                    && snapshot.focused_workspace_id.as_deref() != Some(pane.workspace_id.as_str())
+            });
+            let cursor = frame.cursor.clone();
+            let mut composed = frame.to_ratatui_buffer()?;
+            render_agent_drag(
+                &mut composed,
+                Rect::new(0, 0, cols, rows),
+                label,
+                *point,
+                target.as_ref(),
+                other_space,
+                &self.config.palette,
+            );
+            frame.replace_from_ratatui_buffer_preserving_effects(&composed, cursor);
+        }
         self.hits.popup = None;
         if let Some(popup) = surface.popup.as_deref() {
             let width = popup.width.map(client_popup_size);
@@ -557,4 +581,95 @@ fn client_popup_size(size: crate::protocol::ClientShellPopupSize) -> crate::popu
             crate::popup_size::PopupSize::Percent(percent)
         }
     }
+}
+
+/// Preview for an agent dragged from the sidebar: the half of the target pane
+/// it would take and a tag at the pointer.
+fn render_agent_drag(
+    buffer: &mut Buffer,
+    area: Rect,
+    label: &str,
+    point: (u16, u16),
+    target: Option<&AgentDropTarget>,
+    other_space: bool,
+    palette: &crate::app::state::Palette,
+) {
+    let accent = Style::default()
+        .fg(palette.panel_bg)
+        .bg(palette.accent)
+        .add_modifier(Modifier::BOLD);
+    if area.width == 0 || area.height == 0 {
+        return;
+    }
+    let tag_y = if point.1 + 1 < area.bottom() {
+        point.1 + 1
+    } else {
+        point.1.saturating_sub(1)
+    };
+    let suffix = match target {
+        Some(AgentDropTarget::Pane { side, rect, .. }) => {
+            let half = |r: Rect| -> Rect {
+                match side {
+                    AgentDropSide::Left => Rect::new(r.x, r.y, r.width.div_ceil(2), r.height),
+                    AgentDropSide::Right => {
+                        Rect::new(r.x + r.width / 2, r.y, r.width - r.width / 2, r.height)
+                    }
+                    AgentDropSide::Up => Rect::new(r.x, r.y, r.width, r.height.div_ceil(2)),
+                    AgentDropSide::Down => {
+                        Rect::new(r.x, r.y + r.height / 2, r.width, r.height - r.height / 2)
+                    }
+                    AgentDropSide::Swap => r,
+                }
+            };
+            let preview = half(*rect).intersection(area);
+            for y in preview.top()..preview.bottom() {
+                for x in preview.left()..preview.right() {
+                    buffer[(x, y)].set_bg(palette.surface1);
+                }
+            }
+            let block = ratatui::widgets::Block::default()
+                .borders(ratatui::widgets::Borders::ALL)
+                .border_type(ratatui::widgets::BorderType::Thick)
+                .border_style(Style::default().fg(palette.accent).bg(palette.surface1));
+            ratatui::widgets::Widget::render(block, preview, buffer);
+            let text = match side {
+                AgentDropSide::Left => " \u{2190} split left ",
+                AgentDropSide::Right => " split right \u{2192} ",
+                AgentDropSide::Up => " \u{2191} split up ",
+                AgentDropSide::Down => " \u{2193} split down ",
+                AgentDropSide::Swap => " \u{21c4} swap ",
+            };
+            let width = text.chars().count() as u16;
+            if preview.width > width && preview.height > 2 {
+                let mut y = preview.y + preview.height / 2;
+                if y.abs_diff(tag_y) <= 1 {
+                    // keep the pointer tag from covering the side label
+                    y = y.saturating_sub(3).max(preview.y + 1);
+                }
+                buffer.set_string(preview.x + (preview.width - width) / 2, y, text, accent);
+            }
+            ""
+        }
+        Some(AgentDropTarget::NewTab { .. }) => " \u{2192} new tab",
+        None if other_space => " \u{b7} other space",
+        None => "",
+    };
+    let mut tag: String = format!(" \u{283f} {label}{suffix} ");
+    if tag.chars().count() > 48 {
+        tag = tag.chars().take(46).collect::<String>() + "\u{2026} ";
+    }
+    let width = tag.chars().count() as u16;
+    let x = point
+        .0
+        .saturating_add(2)
+        .min(area.right().saturating_sub(width));
+    buffer.set_string(
+        x,
+        tag_y,
+        tag,
+        Style::default()
+            .fg(palette.text)
+            .bg(palette.surface0)
+            .add_modifier(Modifier::BOLD),
+    );
 }

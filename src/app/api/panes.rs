@@ -1109,6 +1109,28 @@ impl App {
             }
         };
 
+        // ui.keep_empty_workspaces: a pane leaving for another workspace must not
+        // take its workspace with it; open the fresh shell tab first.
+        let leaves_workspace = match &resolved {
+            ResolvedPaneMoveDestination::ExistingTab {
+                cross_workspace, ..
+            } => *cross_workspace,
+            ResolvedPaneMoveDestination::NewTab { workspace_id, .. } => {
+                workspace_id != &previous_workspace_id
+            }
+            ResolvedPaneMoveDestination::NewWorkspace { .. } => true,
+        };
+        if self.state.keep_empty_workspaces
+            && leaves_workspace
+            && self
+                .state
+                .workspaces
+                .get(source_ws_idx)
+                .is_some_and(|ws| ws.tabs.len() == 1 && ws.tabs[0].layout.pane_count() == 1)
+        {
+            self.keep_workspace_with_fresh_tab_focus(source_ws_idx, false);
+        }
+
         let previous_focus = self.state.current_pane_focus_target();
         let taken = match self
             .state
