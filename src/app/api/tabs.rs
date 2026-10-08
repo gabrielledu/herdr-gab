@@ -217,6 +217,16 @@ impl App {
     /// pane of a workspace, open a fresh shell tab at the workspace root so the
     /// workspace survives. Returns true when the replacement tab exists.
     pub(super) fn keep_workspace_with_fresh_tab(&mut self, ws_idx: usize) -> bool {
+        self.keep_workspace_with_fresh_tab_focus(ws_idx, true)
+    }
+
+    /// Same as [`Self::keep_workspace_with_fresh_tab`]; `focus: false` keeps the
+    /// viewer where they are (a pane leaving for another workspace).
+    pub(super) fn keep_workspace_with_fresh_tab_focus(
+        &mut self,
+        ws_idx: usize,
+        focus: bool,
+    ) -> bool {
         let Some(ws) = self.state.workspaces.get(ws_idx) else {
             return false;
         };
@@ -224,7 +234,7 @@ impl App {
         let params = TabCreateParams {
             workspace_id: Some(ws.id.clone()),
             cwd: Some(ws.identity_cwd.display().to_string()),
-            focus: true,
+            focus,
             label: None,
             env: Default::default(),
         };
