@@ -624,9 +624,9 @@ impl ClientShellState {
             .unwrap_or_else(|| pane_id.to_owned())
     }
 
-    /// Where an agent dragged from the sidebar would land at `point`. Moves
-    /// stay inside the agent's own space: across spaces herdr renames the pane,
-    /// and the old id no longer resolves as an agent for Despacho and Remo.
+    /// Where an agent dragged from the sidebar would land at `point`. An agent
+    /// from another space comes into the space on screen; herdr gives it a new
+    /// pane id there and keeps the old one as an alias.
     fn agent_drop_target_at(
         &self,
         source_pane_id: &str,
@@ -637,18 +637,16 @@ impl ClientShellState {
             .panes
             .iter()
             .find(|pane| pane.pane_id == source_pane_id)?;
-        if snapshot.focused_workspace_id.as_deref() != Some(source.workspace_id.as_str()) {
-            return None;
-        }
+        let workspace_id = snapshot.focused_workspace_id.clone()?;
         if self.tab_drop_index_at(point).is_some() || super::contains(self.hits.new_tab, point) {
             let source_tab_panes = snapshot
                 .panes
                 .iter()
                 .filter(|pane| pane.tab_id == source.tab_id)
                 .count();
-            return (source_tab_panes > 1).then(|| AgentDropTarget::NewTab {
-                workspace_id: source.workspace_id.clone(),
-            });
+            let other_space = source.workspace_id != workspace_id;
+            return (other_space || source_tab_panes > 1)
+                .then_some(AgentDropTarget::NewTab { workspace_id });
         }
         let hit = self
             .hits
