@@ -528,6 +528,7 @@ fn restore_tab(
         }
 
         let saved_label = saved_pane.and_then(|p| p.label.clone());
+        let saved_home_workspace_id = saved_pane.and_then(|p| p.home_workspace_id.clone());
         let saved_agent_name = saved_pane.and_then(|p| p.agent_name.clone());
         let saved_managed_agent = saved_pane
             .and_then(|pane| pane.managed_agent_kind.as_deref())
@@ -591,6 +592,7 @@ fn restore_tab(
             if let Some(label) = saved_label {
                 terminal.set_manual_label(label);
             }
+            terminal.home_workspace_id = saved_home_workspace_id.clone();
             if let Some(session) = restored_agent_session {
                 terminal.set_persisted_agent_session(session);
             }
@@ -691,6 +693,7 @@ fn restore_tab(
                 if let Some(label) = saved_label {
                     terminal.set_manual_label(label);
                 }
+                terminal.home_workspace_id = saved_home_workspace_id.clone();
                 if let Some(session) = restored_agent_session {
                     terminal.set_persisted_agent_session(session);
                 }
@@ -1474,6 +1477,7 @@ mod tests {
                             }),
                             agent_resume: None,
                             launch_argv: None,
+                            home_workspace_id: None,
                         },
                     )]),
                     zoomed: false,
@@ -1556,6 +1560,7 @@ mod tests {
                                 agent_session: None,
                                 agent_resume: None,
                                 launch_argv: None,
+                                home_workspace_id: None,
                             },
                         ),
                         (
@@ -1568,6 +1573,7 @@ mod tests {
                                 agent_session: None,
                                 agent_resume: None,
                                 launch_argv: None,
+                                home_workspace_id: None,
                             },
                         ),
                     ]),
@@ -1622,6 +1628,7 @@ mod tests {
                     agent_session: None,
                     agent_resume: None,
                     launch_argv: None,
+                    home_workspace_id: None,
                 },
             )
         };
@@ -1638,6 +1645,7 @@ mod tests {
             }),
             agent_resume: None,
             launch_argv: None,
+            home_workspace_id: None,
         };
         let snapshot = SessionSnapshot {
             version: super::super::snapshot::SNAPSHOT_VERSION,
@@ -1790,6 +1798,7 @@ mod tests {
                             }),
                             agent_resume: None,
                             launch_argv: None,
+                            home_workspace_id: None,
                         },
                     )]),
                     zoomed: false,
@@ -2096,6 +2105,7 @@ mod tests {
                 agent_session: None,
                 agent_resume: None,
                 launch_argv: None,
+                home_workspace_id: None,
             },
         );
         let mut history = SessionHistorySnapshot {

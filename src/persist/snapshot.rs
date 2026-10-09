@@ -111,6 +111,8 @@ pub struct PaneSnapshot {
     pub agent_resume: Option<PaneAgentResumeSnapshot>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub launch_argv: Option<Vec<String>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub home_workspace_id: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -386,6 +388,7 @@ fn capture_tab(
                 agent_session,
                 agent_resume,
                 launch_argv,
+                home_workspace_id: terminal.and_then(|terminal| terminal.home_workspace_id.clone()),
             },
         );
     }
@@ -705,6 +708,7 @@ mod tests {
                 agent_session: None,
                 agent_resume: None,
                 launch_argv: None,
+                home_workspace_id: None,
             },
         );
         panes.insert(
@@ -717,6 +721,7 @@ mod tests {
                 agent_session: None,
                 agent_resume: None,
                 launch_argv: None,
+                home_workspace_id: None,
             },
         );
 
@@ -1422,6 +1427,7 @@ mod tests {
                 agent_session: None,
                 agent_resume: None,
                 launch_argv: None,
+                home_workspace_id: None,
             },
         );
         panes.insert(
@@ -1436,6 +1442,7 @@ mod tests {
                 agent_session: None,
                 agent_resume: None,
                 launch_argv: None,
+                home_workspace_id: None,
             },
         );
 
@@ -1479,5 +1486,20 @@ mod tests {
             restored.workspaces[0].tabs[0].panes[&0].cwd,
             PathBuf::from("/tmp/this-directory-does-not-exist-for-herdr-test")
         );
+    }
+}
+
+#[cfg(test)]
+mod home_workspace_tests {
+    use super::PaneSnapshot;
+
+    #[test]
+    fn pane_snapshot_keeps_the_home_workspace_and_reads_old_files() {
+        let old: PaneSnapshot = serde_json::from_str(r#"{"cwd":"/tmp"}"#).unwrap();
+        assert_eq!(old.home_workspace_id, None);
+        let saved: PaneSnapshot =
+            serde_json::from_str(r#"{"cwd":"/tmp","home_workspace_id":"wF"}"#).unwrap();
+        assert_eq!(saved.home_workspace_id.as_deref(), Some("wF"));
+        assert!(serde_json::to_string(&old).unwrap().find("home").is_none());
     }
 }
