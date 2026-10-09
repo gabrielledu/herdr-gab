@@ -144,36 +144,41 @@ fn dropping_near_the_left_edge_splits_then_swaps_so_the_agent_lands_first() {
 }
 
 #[test]
-fn agents_from_another_space_do_not_drop_and_say_why() {
+fn an_agent_from_another_space_joins_the_pane_on_screen() {
     let mut state = state_with_agents();
     let rect = pane_rect(&state);
-    let from = agent_row(&state, "pane_3");
-    mouse(&mut state, MouseEventKind::Down(MouseButton::Left), from);
-    mouse(
-        &mut state,
-        MouseEventKind::Drag(MouseButton::Left),
-        (rect.right() - 1, rect.y),
+    let methods = drag(&mut state, "pane_3", (rect.right() - 1, rect.y));
+    assert!(
+        matches!(
+            &methods[..],
+            [Method::PaneMove(params)] if params.pane_id == "pane_3"
+                && params.destination == PaneMoveDestination::Tab {
+                    tab_id: "tab_1".into(),
+                    target_pane_id: Some("pane_1".into()),
+                    split: SplitDirection::Right,
+                    ratio: None,
+                }
+        ),
+        "{methods:?}"
     );
-    let frame = state.compose(106, 30).expect("preview");
-    let text = frame
-        .cells
-        .chunks(frame.width as usize)
-        .map(|row| {
-            row.iter()
-                .map(|cell| cell.symbol.as_str())
-                .collect::<String>()
-        })
-        .collect::<Vec<_>>()
-        .join("\n");
-    assert!(text.contains("other space"), "{text}");
-    let up = mouse(
-        &mut state,
-        MouseEventKind::Up(MouseButton::Left),
-        (rect.right() - 1, rect.y),
-    );
-    assert!(up.actions.is_empty());
+}
+
+#[test]
+fn an_agent_from_another_space_dropped_on_the_tab_bar_gets_a_tab_here() {
+    let mut state = state_with_agents();
     let tab = state.hits.tabs[0].0;
-    assert!(drag(&mut state, "pane_3", (tab.x + 1, tab.y)).is_empty());
+    let methods = drag(&mut state, "pane_3", (tab.x + 1, tab.y));
+    assert!(
+        matches!(
+            &methods[..],
+            [Method::PaneMove(params)] if params.pane_id == "pane_3"
+                && params.destination == PaneMoveDestination::NewTab {
+                    workspace_id: Some("ws_1".into()),
+                    label: Some("Copy da VSL".into()),
+                }
+        ),
+        "{methods:?}"
+    );
 }
 
 #[test]

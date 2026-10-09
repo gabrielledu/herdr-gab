@@ -355,16 +355,12 @@ impl ClientShellState {
             frame.replace_from_ratatui_buffer_preserving_effects(&composed, cursor);
         }
         if let Some(ClientChromeDrag::Agent {
-            pane_id,
             label,
             point,
             target,
+            ..
         }) = self.chrome_drag.as_ref()
         {
-            let other_space = snapshot.panes.iter().any(|pane| {
-                pane.pane_id == *pane_id
-                    && snapshot.focused_workspace_id.as_deref() != Some(pane.workspace_id.as_str())
-            });
             let cursor = frame.cursor.clone();
             let mut composed = frame.to_ratatui_buffer()?;
             render_agent_drag(
@@ -373,7 +369,6 @@ impl ClientShellState {
                 label,
                 *point,
                 target.as_ref(),
-                other_space,
                 &self.config.palette,
             );
             frame.replace_from_ratatui_buffer_preserving_effects(&composed, cursor);
@@ -591,7 +586,6 @@ fn render_agent_drag(
     label: &str,
     point: (u16, u16),
     target: Option<&AgentDropTarget>,
-    other_space: bool,
     palette: &crate::app::state::Palette,
 ) {
     let accent = Style::default()
@@ -651,7 +645,6 @@ fn render_agent_drag(
             ""
         }
         Some(AgentDropTarget::NewTab { .. }) => " \u{2192} new tab",
-        None if other_space => " \u{b7} other space",
         None => "",
     };
     let mut tag: String = format!(" \u{283f} {label}{suffix} ");
