@@ -601,7 +601,10 @@ fn render_agent_drag(
         point.1.saturating_sub(1)
     };
     let suffix = match target {
-        Some(AgentDropTarget::Pane { side, rect, .. }) => {
+        Some(
+            AgentDropTarget::Pane { side, rect, .. } | AgentDropTarget::TabEdge { side, rect, .. },
+        ) => {
+            let edge = matches!(target, Some(AgentDropTarget::TabEdge { .. }));
             let half = |r: Rect| -> Rect {
                 match side {
                     AgentDropSide::Left => Rect::new(r.x, r.y, r.width.div_ceil(2), r.height),
@@ -626,12 +629,16 @@ fn render_agent_drag(
                 .border_type(ratatui::widgets::BorderType::Thick)
                 .border_style(Style::default().fg(palette.accent).bg(palette.surface1));
             ratatui::widgets::Widget::render(block, preview, buffer);
-            let text = match side {
-                AgentDropSide::Left => " \u{2190} split left ",
-                AgentDropSide::Right => " split right \u{2192} ",
-                AgentDropSide::Up => " \u{2191} split up ",
-                AgentDropSide::Down => " \u{2193} split down ",
-                AgentDropSide::Swap => " \u{21c4} swap ",
+            let text = match (side, edge) {
+                (AgentDropSide::Left, false) => " \u{2190} split left ",
+                (AgentDropSide::Right, false) => " split right \u{2192} ",
+                (AgentDropSide::Up, false) => " \u{2191} split up ",
+                (AgentDropSide::Down, false) => " \u{2193} split down ",
+                (AgentDropSide::Left, true) => " \u{2190} left of all ",
+                (AgentDropSide::Right, true) => " right of all \u{2192} ",
+                (AgentDropSide::Up, true) => " \u{2191} above all ",
+                (AgentDropSide::Down, true) => " \u{2193} below all ",
+                (AgentDropSide::Swap, _) => " \u{21c4} swap ",
             };
             let width = text.chars().count() as u16;
             if preview.width > width && preview.height > 2 {

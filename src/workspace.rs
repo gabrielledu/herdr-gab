@@ -938,6 +938,25 @@ impl Workspace {
         Ok(pane_id)
     }
 
+    pub(crate) fn insert_moved_pane_at_tab_edge(
+        &mut self,
+        tab_idx: usize,
+        moved: MovedPane,
+        direction: Direction,
+        before: bool,
+        focus: bool,
+    ) -> Result<PaneId, MovedPane> {
+        let pane_id = moved.pane_id;
+        let Some(tab) = self.tabs.get_mut(tab_idx) else {
+            return Err(moved);
+        };
+        tab.insert_existing_pane_at_edge(moved, direction, before, focus)?;
+        if !self.public_pane_numbers.contains_key(&pane_id) {
+            self.register_new_pane_with_number(pane_id, self.next_public_pane_number);
+        }
+        Ok(pane_id)
+    }
+
     pub(crate) fn create_tab_from_existing_pane(
         &mut self,
         moved: MovedPane,

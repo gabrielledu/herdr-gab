@@ -498,6 +498,25 @@ impl Tab {
         Ok(pane_id)
     }
 
+    pub(crate) fn insert_existing_pane_at_edge(
+        &mut self,
+        moved: MovedPane,
+        direction: Direction,
+        before: bool,
+        focus: bool,
+    ) -> Result<PaneId, MovedPane> {
+        if !self
+            .layout
+            .insert_pane_at_edge(moved.pane_id, direction, before, focus)
+        {
+            return Err(moved);
+        }
+        let pane_id = moved.pane_id;
+        self.panes.insert(pane_id, moved.pane_state);
+        self.zoomed = false;
+        Ok(pane_id)
+    }
+
     fn detach_pane(&mut self, pane_id: PaneId) -> Option<DetachedPane> {
         if self.layout.pane_count() <= 1 {
             return None;

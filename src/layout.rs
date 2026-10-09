@@ -200,6 +200,37 @@ impl TileLayout {
         true
     }
 
+    /// Put `moved` along a whole edge of the layout, splitting the root; with
+    /// `before` it goes left or on top.
+    pub fn insert_pane_at_edge(
+        &mut self,
+        moved: PaneId,
+        direction: Direction,
+        before: bool,
+        focus: bool,
+    ) -> bool {
+        if self.pane_ids().contains(&moved) {
+            return false;
+        }
+        let placeholder = PaneId::from_raw(0);
+        let old = std::mem::replace(&mut self.root, Node::Pane(placeholder));
+        let (first, second) = if before {
+            (Node::Pane(moved), old)
+        } else {
+            (old, Node::Pane(moved))
+        };
+        self.root = Node::Split {
+            direction,
+            ratio: 0.5,
+            first: Box::new(first),
+            second: Box::new(second),
+        };
+        if focus {
+            self.set_focus(moved);
+        }
+        true
+    }
+
     /// Close the focused pane, returning focus to the pane it came from when
     /// that pane is still open. Returns false if it's the last pane.
     pub fn close_focused(&mut self) -> bool {

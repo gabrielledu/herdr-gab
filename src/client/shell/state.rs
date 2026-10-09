@@ -255,6 +255,13 @@ pub(super) enum AgentDropTarget {
         /// Pane rect on screen, for the preview.
         rect: Rect,
     },
+    /// Along a whole edge of the tab on screen, beside every pane there.
+    TabEdge {
+        tab_id: String,
+        side: AgentDropSide,
+        /// Area of all the tab's panes, for the preview.
+        rect: Rect,
+    },
     /// Detach into a tab of its own in the same space.
     NewTab { workspace_id: String },
 }
@@ -583,6 +590,7 @@ pub(super) enum ClientContextMenuAction {
     RenamePane,
     ClearPaneName,
     SwapWithFocusedPane,
+    Detach,
     SplitRight,
     SplitDown,
     Zoom,
@@ -609,6 +617,8 @@ pub(super) enum ClientContextMenuTarget {
         source_pane_id: Option<String>,
         has_manual_label: bool,
         right_click_passthrough: bool,
+        /// Shares its tab with other panes, so it can be detached.
+        shares_tab: bool,
     },
 }
 

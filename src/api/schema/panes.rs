@@ -88,6 +88,28 @@ pub struct PaneMoveParams {
     pub focus: bool,
 }
 
+/// Fork-only placements for a pane that `pane.move` cannot express.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
+pub struct PanePlaceParams {
+    pub pane_id: String,
+    pub placement: PanePlacement,
+    #[serde(default)]
+    pub focus: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(tag = "type", rename_all = "snake_case")]
+pub enum PanePlacement {
+    /// Back to a tab of its own in the workspace it came from (its current
+    /// workspace if it never left or that workspace is gone).
+    Home {
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        label: Option<String>,
+    },
+    /// Along a whole edge of a tab, beside every pane already there.
+    TabEdge { tab_id: String, side: PaneDirection },
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum PaneMoveDestination {

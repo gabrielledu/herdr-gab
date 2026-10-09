@@ -282,3 +282,167 @@ fn drop_side_picks_the_nearest_edge_and_swaps_in_the_middle_of_the_same_tab() {
     assert_eq!(agent_drop_side(rect, (30, 15), true), AgentDropSide::Swap);
     assert_ne!(agent_drop_side(rect, (30, 15), false), AgentDropSide::Swap);
 }
+
+/// tab_1 shows pane_1 and pane_4 side by side, each 20x12.
+fn state_with_two_panes_side_by_side() -> ClientShellState {
+    let mut state = state_with_agents();
+    let mut projected = (**state.snapshot.as_ref().expect("snapshot")).clone();
+    let mut pane_4 = projected.panes[0].clone();
+    pane_4.pane_id = "pane_4".into();
+    pane_4.focused = false;
+    projected.panes.push(pane_4);
+    projected.revision += 1;
+    state.set_snapshot(Box::new(projected));
+    let mut frame = surface();
+    frame.projection_revision += 1;
+    frame.frame = FrameData::from_ratatui_buffer_with_hyperlinks(
+        &Buffer::empty(Rect::new(0, 0, 40, 12)),
+        None,
+        &[],
+    );
+    let mut left = frame.panes[0].clone();
+    let rect = SurfaceRect {
+        x: 0,
+        y: 0,
+        width: 20,
+        height: 12,
+    };
+    left.rect = rect;
+    left.inner_rect = rect;
+    let mut right = left.clone();
+    right.pane_id = "pane_4".into();
+    right.focused = false;
+    right.rect.x = 20;
+    right.inner_rect.x = 20;
+    frame.panes = vec![left, right];
+    state.set_pane_surface(frame);
+    state.compose(106, 30).expect("frame");
+    state
+}
+
+fn tab_area(state: &ClientShellState) -> Rect {
+    state
+        .hits
+        .panes
+        .iter()
+        .map(|hit| hit.rect)
+        .reduce(|a, b| a.union(b))
+        .expect("panes")
+}
+
+#[test]
+fn dropping_on_the_bottom_band_puts_the_agent_below_every_pane_of_the_tab() {
+    let mut state = state_with_two_panes_side_by_side();
+    let area = tab_area(&state);
+    assert_eq!(state.hits.panes.len(), 2);
+    let methods = drag(
+        &mut state,
+        "pane_3",
+        (area.x + area.width / 2, area.bottom() - 1),
+    );
+    assert!(
+        matches!(
+            &methods[..],
+            [Method::PanePlace(params)] if params.pane_id == "pane_3"
+                && params.focus
+                && params.placement == crate::api::schema::PanePlacement::TabEdge {
+                    tab_id: "tab_1".into(),
+                    side: crate::api::schema::PaneDirection::Down,
+                }
+        ),
+        "{methods:?}"
+    );
+}
+
+#[test]
+fn above_the_band_the_drop_still_splits_only_the_pane_under_the_pointer() {
+    let mut state = state_with_two_panes_side_by_side();
+    let left = state.hits.panes[0].rect;
+    let methods = drag(
+        &mut state,
+        "pane_3",
+        (left.x + left.width / 2, left.y + left.height * 2 / 3),
+    );
+    assert!(
+        matches!(
+            &methods[..],
+            [Method::PaneMove(params)] if matches!(
+                &params.destination,
+                PaneMoveDestination::Tab { split: SplitDirection::Down, target_pane_id: Some(target), .. }
+                    if target == "pane_1"
+            )
+        ),
+        "{methods:?}"
+    );
+}
+
+#[test]
+fn edge_preview_names_the_whole_tab() {
+    let mut state = state_with_two_panes_side_by_side();
+    let area = tab_area(&state);
+    let from = agent_row(&state, "pane_3");
+    mouse(&mut state, MouseEventKind::Down(MouseButton::Left), from);
+    mouse(
+        &mut state,
+        MouseEventKind::Drag(MouseButton::Left),
+        (area.x + area.width / 2, area.bottom() - 1),
+    );
+    let frame = state.compose(106, 30).expect("preview");
+    let text = frame
+        .cells
+        .chunks(frame.width as usize)
+        .map(|row| {
+            row.iter()
+                .map(|cell| cell.symbol.as_str())
+                .collect::<String>()
+        })
+        .collect::<Vec<_>>()
+        .join("\n");
+    assert!(text.contains("below all"), "{text}");
+}
+
+#[test]
+fn a_pane_sharing_its_tab_can_be_detached_home_from_the_right_click_menu() {
+    let mut state = state_with_two_panes_side_by_side();
+    state.open_pane_context_menu("pane_4".into(), 30, 5);
+    let Some(ClientShellOverlay::ContextMenu(menu)) = state.overlay.as_ref() else {
+        panic!("menu");
+    };
+    let index = menu
+        .items()
+        .iter()
+        .position(|item| item.action == ClientContextMenuAction::Detach)
+        .expect("Detach item");
+    let mut outcome = ClientShellInput::default();
+    state.activate_context_menu_item(index, &mut outcome);
+    let methods: Vec<Method> = outcome
+        .actions
+        .into_iter()
+        .map(|action| match action {
+            ClientShellAction::Endpoint { request, .. } => request.method,
+            other => panic!("unexpected action {other:?}"),
+        })
+        .collect();
+    assert!(
+        matches!(
+            &methods[..],
+            [Method::PanePlace(params)] if params.pane_id == "pane_4"
+                && !params.focus
+                && matches!(params.placement, crate::api::schema::PanePlacement::Home { .. })
+        ),
+        "{methods:?}"
+    );
+}
+
+#[test]
+fn a_pane_alone_in_its_tab_has_no_detach() {
+    let mut state = state_with_agents();
+    state.open_pane_context_menu("pane_1".into(), 30, 5);
+    let Some(ClientShellOverlay::ContextMenu(menu)) = state.overlay.as_ref() else {
+        panic!("menu");
+    };
+    assert!(menu
+        .items()
+        .iter()
+        .all(|item| item.action != ClientContextMenuAction::Detach));
+}

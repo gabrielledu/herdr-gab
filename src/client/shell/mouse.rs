@@ -595,7 +595,7 @@ impl ClientShellState {
 
     /// Readable name for a dragged agent: the pane's own label, then the
     /// `rotulo` token the agent namer writes, then the agent name.
-    fn agent_drag_label(&self, pane_id: &str) -> String {
+    pub(super) fn agent_drag_label(&self, pane_id: &str) -> String {
         let Some(snapshot) = self.snapshot.as_deref() else {
             return pane_id.to_owned();
         };
@@ -648,6 +648,10 @@ impl ClientShellState {
             return (other_space || source_tab_panes > 1)
                 .then_some(AgentDropTarget::NewTab { workspace_id });
         }
+        let tab_id = snapshot.focused_tab_id.clone()?;
+        if let Some(edge) = self.agent_tab_edge_at(snapshot, source_pane_id, &tab_id, point) {
+            return Some(edge);
+        }
         let hit = self
             .hits
             .panes
@@ -656,13 +660,59 @@ impl ClientShellState {
         if hit.pane_id == source_pane_id {
             return None;
         }
-        let tab_id = snapshot.focused_tab_id.clone()?;
         let same_tab = source.tab_id == tab_id;
         Some(AgentDropTarget::Pane {
             pane_id: hit.pane_id.clone(),
             tab_id,
             side: agent_drop_side(hit.rect, point, same_tab),
             rect: hit.rect,
+        })
+    }
+
+    /// A band along the outer edge of the tab's pane area places the agent
+    /// beside all of the tab's panes at once, not just the one under the pointer.
+    fn agent_tab_edge_at(
+        &self,
+        snapshot: &crate::protocol::ClientShellSnapshot,
+        source_pane_id: &str,
+        tab_id: &str,
+        point: (u16, u16),
+    ) -> Option<AgentDropTarget> {
+        let others = snapshot
+            .panes
+            .iter()
+            .filter(|pane| pane.tab_id == tab_id && pane.pane_id != source_pane_id)
+            .count();
+        if others < 2 {
+            return None;
+        }
+        let rect = self
+            .hits
+            .panes
+            .iter()
+            .filter(|hit| !hit.popup)
+            .map(|hit| hit.rect)
+            .reduce(|a, b| a.union(b))?;
+        if !super::contains(rect, point) {
+            return None;
+        }
+        let rows = (rect.height / 6).max(1);
+        let cols = (rect.width / 12).max(2);
+        let side = if point.1 >= rect.bottom().saturating_sub(rows) {
+            AgentDropSide::Down
+        } else if point.1 < rect.y + rows {
+            AgentDropSide::Up
+        } else if point.0 < rect.x + cols {
+            AgentDropSide::Left
+        } else if point.0 >= rect.right().saturating_sub(cols) {
+            AgentDropSide::Right
+        } else {
+            return None;
+        };
+        Some(AgentDropTarget::TabEdge {
+            tab_id: tab_id.to_owned(),
+            side,
+            rect,
         })
     }
 
@@ -674,7 +724,8 @@ impl ClientShellState {
         outcome: &mut ClientShellInput,
     ) {
         use crate::api::schema::{
-            Method, PaneMoveDestination, PaneMoveParams, PaneSwapParams, SplitDirection,
+            Method, PaneDirection, PaneMoveDestination, PaneMoveParams, PanePlaceParams,
+            PanePlacement, PaneSwapParams, SplitDirection,
         };
         let swap = |source: &str, target: &str| {
             Method::PaneSwap(PaneSwapParams {
@@ -738,6 +789,22 @@ impl ClientShellState {
                 if matches!(side, AgentDropSide::Left | AgentDropSide::Up) {
                     self.push_endpoint_method(swap(&pane_id, &target_pane_id), outcome);
                 }
+            }
+            AgentDropTarget::TabEdge { tab_id, side, .. } => {
+                let side = match side {
+                    AgentDropSide::Left => PaneDirection::Left,
+                    AgentDropSide::Right => PaneDirection::Right,
+                    AgentDropSide::Up => PaneDirection::Up,
+                    AgentDropSide::Down | AgentDropSide::Swap => PaneDirection::Down,
+                };
+                self.push_endpoint_method(
+                    Method::PanePlace(PanePlaceParams {
+                        pane_id,
+                        placement: PanePlacement::TabEdge { tab_id, side },
+                        focus: true,
+                    }),
+                    outcome,
+                );
             }
             AgentDropTarget::NewTab { workspace_id } => {
                 self.push_endpoint_method(

@@ -50,6 +50,7 @@ impl ClientContextMenuOverlay {
                 source_pane_id,
                 has_manual_label,
                 right_click_passthrough,
+                shares_tab,
                 ..
             } => {
                 let mut items = vec![item("Rename pane", Action::RenamePane)];
@@ -58,6 +59,9 @@ impl ClientContextMenuOverlay {
                 }
                 if source_pane_id.is_some() {
                     items.push(item("Swap with focused pane", Action::SwapWithFocusedPane));
+                }
+                if *shares_tab {
+                    items.push(item("Detach \u{21a9}", Action::Detach));
                 }
                 items.extend([
                     item("Split right", Action::SplitRight),
@@ -152,6 +156,12 @@ impl ClientShellState {
             .focused_pane_id
             .clone()
             .filter(|focused| focused != &pane_id);
+        let shares_tab = snapshot
+            .panes
+            .iter()
+            .filter(|other| other.tab_id == pane.tab_id)
+            .count()
+            > 1;
         self.overlay = Some(ClientShellOverlay::ContextMenu(ClientContextMenuOverlay {
             target: ClientContextMenuTarget::Pane {
                 pane_id,
@@ -159,6 +169,7 @@ impl ClientShellState {
                 source_pane_id,
                 has_manual_label: pane.label.is_some(),
                 right_click_passthrough: pane.right_click_passthrough,
+                shares_tab,
             },
             x,
             y,
@@ -462,6 +473,18 @@ impl ClientShellState {
             ),
             ClientContextMenuAction::ClosePane => {
                 self.push_endpoint_method(Method::PaneClose(PaneTarget { pane_id }), outcome)
+            }
+            ClientContextMenuAction::Detach => {
+                // Back to the space it was dragged from, as a tab of its own.
+                let label = self.agent_drag_label(&pane_id);
+                self.push_endpoint_method(
+                    Method::PanePlace(crate::api::schema::PanePlaceParams {
+                        pane_id,
+                        placement: crate::api::schema::PanePlacement::Home { label: Some(label) },
+                        focus: false,
+                    }),
+                    outcome,
+                );
             }
             _ => {}
         }
