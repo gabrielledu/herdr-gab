@@ -974,6 +974,7 @@ impl App {
             Method::PaneSplit(params) => return self.handle_pane_split(request.id, params),
             Method::PaneSwap(params) => return self.handle_pane_swap(request.id, params),
             Method::PaneMove(params) => return self.handle_pane_move(request.id, params),
+            Method::PanePlace(params) => return self.handle_pane_place(request.id, params),
             Method::PaneZoom(params) => return self.handle_pane_zoom(request.id, params),
             Method::PaneLayout(params) => return self.handle_pane_layout(request.id, params),
             Method::PaneProcessInfo(params) => {
@@ -2147,6 +2148,127 @@ mod tests {
         app.state.active = Some(0);
         app.state.ensure_test_terminals();
         (app, pane_id)
+    }
+
+    /// ws 0 "kept" holds the pane under test; ws 1 "other" shows two panes side by side.
+    fn place_test_app() -> (App, crate::layout::PaneId, [crate::layout::PaneId; 2]) {
+        let (mut app, pane_id) = keep_empty_test_app();
+        let mut other = crate::workspace::Workspace::test_new("other");
+        other.identity_cwd = std::env::temp_dir();
+        let left = other.tabs[0].root_pane;
+        let right = other.test_split(ratatui::layout::Direction::Horizontal);
+        app.state.workspaces.push(other);
+        app.state.ensure_test_terminals();
+        (app, pane_id, [left, right])
+    }
+
+    fn place(app: &mut App, pane_id: String, placement: crate::api::schema::PanePlacement) {
+        let response = app.handle_pane_place(
+            "p".into(),
+            crate::api::schema::PanePlaceParams {
+                pane_id,
+                placement,
+                focus: false,
+            },
+        );
+        assert!(!response.contains("\"error\""), "{response}");
+    }
+
+    fn home_of(app: &App, pane_id: crate::layout::PaneId) -> Option<String> {
+        let (ws_idx, _) = app.find_pane(pane_id).unwrap();
+        let terminal_id = app.state.workspaces[ws_idx].terminal_id(pane_id).unwrap();
+        app.state.terminals[terminal_id].home_workspace_id.clone()
+    }
+
+    #[tokio::test]
+    async fn tab_edge_places_a_pane_below_every_pane_of_the_tab() {
+        let (mut app, pane_id, [left, right]) = place_test_app();
+        let tab_id = app.public_tab_id(1, 0).unwrap();
+        let source = app.public_pane_id(0, pane_id).unwrap();
+
+        place(
+            &mut app,
+            source,
+            crate::api::schema::PanePlacement::TabEdge {
+                tab_id,
+                side: crate::api::schema::PaneDirection::Down,
+            },
+        );
+
+        let area = ratatui::layout::Rect::new(0, 0, 100, 40);
+        let panes = app.state.workspaces[1].tabs[0].layout.panes(area);
+        let rect = |id| panes.iter().find(|pane| pane.id == id).unwrap().rect;
+        assert_eq!(rect(pane_id).width, 100, "the new pane spans the whole tab");
+        assert!(rect(pane_id).y > rect(left).y && rect(pane_id).y > rect(right).y);
+        assert_eq!(rect(left).y, rect(right).y, "the two above stay side by side");
+        assert_eq!(home_of(&app, pane_id), Some(app.public_workspace_id(0)));
+
+        for (_, runtime) in app.terminal_runtimes.drain() {
+            runtime.shutdown();
+        }
+    }
+
+    #[tokio::test]
+    async fn home_sends_a_joined_pane_back_to_its_workspace_as_its_own_tab() {
+        let (mut app, pane_id, [left, _]) = place_test_app();
+        let home = app.public_workspace_id(0);
+        let response = app.handle_pane_move(
+            "m".into(),
+            crate::api::schema::PaneMoveParams {
+                pane_id: app.public_pane_id(0, pane_id).unwrap(),
+                destination: crate::api::schema::PaneMoveDestination::Tab {
+                    tab_id: app.public_tab_id(1, 0).unwrap(),
+                    target_pane_id: app.public_pane_id(1, left),
+                    split: crate::api::schema::SplitDirection::Down,
+                    ratio: None,
+                },
+                focus: false,
+            },
+        );
+        assert!(!response.contains("\"error\""), "{response}");
+        assert_eq!(home_of(&app, pane_id), Some(home.clone()));
+        let joined = app.public_pane_id(1, pane_id).unwrap();
+
+        place(
+            &mut app,
+            joined,
+            crate::api::schema::PanePlacement::Home {
+                label: Some("Copy da VSL".into()),
+            },
+        );
+
+        let (ws_idx, _) = app.find_pane(pane_id).unwrap();
+        assert_eq!(app.public_workspace_id(ws_idx), home);
+        let tab_idx = app.state.workspaces[ws_idx]
+            .find_tab_index_for_pane(pane_id)
+            .unwrap();
+        let tab = &app.state.workspaces[ws_idx].tabs[tab_idx];
+        assert_eq!(tab.layout.pane_count(), 1, "back in a tab of its own");
+        assert_eq!(tab.custom_name.as_deref(), Some("Copy da VSL"));
+        assert_eq!(app.state.workspaces[1].tabs[0].layout.pane_count(), 2);
+        assert_eq!(home_of(&app, pane_id), None, "home again");
+
+        for (_, runtime) in app.terminal_runtimes.drain() {
+            runtime.shutdown();
+        }
+    }
+
+    #[tokio::test]
+    async fn home_on_a_pane_alone_at_home_changes_nothing() {
+        let (mut app, pane_id, _) = place_test_app();
+        let response = app.handle_pane_place(
+            "p".into(),
+            crate::api::schema::PanePlaceParams {
+                pane_id: app.public_pane_id(0, pane_id).unwrap(),
+                placement: crate::api::schema::PanePlacement::Home { label: None },
+                focus: false,
+            },
+        );
+        assert!(response.contains("\"changed\":false"), "{response}");
+
+        for (_, runtime) in app.terminal_runtimes.drain() {
+            runtime.shutdown();
+        }
     }
 
     #[tokio::test]

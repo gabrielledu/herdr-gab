@@ -131,6 +131,8 @@ pub struct TerminalState {
     pub terminal_title: Option<String>,
     pub manual_label: Option<String>,
     pub agent_name: Option<String>,
+    /// Workspace the pane was moved away from (fork: `pane.place` Home).
+    pub home_workspace_id: Option<String>,
     agent_name_owner: Option<AgentNameOwner>,
     managed_agent: Option<ManagedAgent>,
     hook_report_sequences: HashMap<String, u64>,
@@ -165,6 +167,7 @@ impl TerminalState {
             terminal_title: None,
             manual_label: None,
             agent_name: None,
+            home_workspace_id: None,
             agent_name_owner: None,
             managed_agent: None,
             hook_report_sequences: HashMap::new(),
