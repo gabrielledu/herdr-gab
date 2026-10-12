@@ -542,6 +542,15 @@ impl AppState {
         changed
     }
 
+    /// Marks one pane as seen without touching focus. `None` when the pane is
+    /// gone; otherwise whether the flag changed.
+    pub(crate) fn mark_pane_seen(&mut self, ws_idx: usize, pane_id: PaneId) -> Option<bool> {
+        let pane = self.workspaces.get_mut(ws_idx)?.pane_state_mut(pane_id)?;
+        let changed = !pane.seen;
+        pane.seen = true;
+        Some(changed)
+    }
+
     pub fn move_workspace(&mut self, source_idx: usize, insert_idx: usize) -> bool {
         if source_idx >= self.workspaces.len() || insert_idx > self.workspaces.len() {
             return false;

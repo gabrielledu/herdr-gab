@@ -181,6 +181,8 @@ pub enum Method {
     PaneGet(PaneTarget),
     #[serde(rename = "pane.focus")]
     PaneFocus(PaneTarget),
+    #[serde(rename = "pane.mark_seen")]
+    PaneMarkSeen(PaneTarget),
     #[serde(rename = "pane.input.set")]
     PaneInputSet(PaneInputSetParams),
     #[serde(rename = "pane.link.activate")]
