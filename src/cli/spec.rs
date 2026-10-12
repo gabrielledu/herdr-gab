@@ -497,6 +497,11 @@ fn pane_command() -> Command {
                 .args(current_pane_args()),
         )
         .subcommand(
+            Command::new("mark-seen")
+                .about("Mark a finished pane as seen without focusing it")
+                .arg(required("pane_id", "PANE_ID")),
+        )
+        .subcommand(
             Command::new("resize")
                 .about("Resize a pane split")
                 .arg(required_direction_option())

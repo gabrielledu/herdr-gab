@@ -499,6 +499,39 @@ impl App {
         encode_success(id, ResponseResult::PaneInfo { pane })
     }
 
+    /// Marks a finished pane as seen without moving focus, so another surface
+    /// (a phone, a web view) can acknowledge it the way focusing it would.
+    pub(super) fn handle_pane_mark_seen(&mut self, id: String, target: PaneTarget) -> String {
+        let Some((ws_idx, pane_id)) = self.parse_pane_id(&target.pane_id) else {
+            return pane_not_found(id, &target.pane_id);
+        };
+        let Some(previous_status) = self
+            .pane_info(ws_idx, pane_id)
+            .map(|pane| pane.agent_status)
+        else {
+            return pane_not_found(id, &target.pane_id);
+        };
+        self.state.mark_pane_seen(ws_idx, pane_id);
+        let Some(pane) = self.pane_info(ws_idx, pane_id) else {
+            return pane_not_found(id, &target.pane_id);
+        };
+        if pane.agent_status != previous_status {
+            self.emit_event(crate::api::schema::EventEnvelope {
+                event: crate::api::schema::EventKind::PaneAgentStatusChanged,
+                data: crate::api::schema::EventData::PaneAgentStatusChanged {
+                    pane_id: pane.pane_id.clone(),
+                    workspace_id: pane.workspace_id.clone(),
+                    agent_status: pane.agent_status,
+                    agent: pane.agent.clone(),
+                    title: pane.title.clone(),
+                    display_agent: pane.display_agent.clone(),
+                    state_labels: pane.state_labels.clone(),
+                },
+            });
+        }
+        encode_success(id, ResponseResult::PaneInfo { pane })
+    }
+
     pub(super) fn handle_pane_layout(&mut self, id: String, params: PaneLayoutParams) -> String {
         let Some((ws_idx, pane_id)) = self.resolve_optional_pane(params.pane_id.as_deref()) else {
             return encode_error(id, "pane_not_found", "pane not found");
@@ -2517,6 +2550,76 @@ mod tests {
         let pane_id = app.state.workspaces[0].tabs[0].root_pane;
         let public_pane_id = app.public_pane_id(0, pane_id).unwrap();
         (app, public_pane_id)
+    }
+
+    #[test]
+    fn pane_mark_seen_turns_done_into_idle_without_moving_focus() {
+        let (mut app, _) = app_with_test_workspace();
+        let background_tab = app.state.workspaces[0].test_add_tab(Some("background"));
+        app.state.ensure_test_terminals();
+        let target = app.state.workspaces[0].tabs[background_tab].root_pane;
+        let public_target = app.public_pane_id(0, target).unwrap();
+        let terminal_id = app.state.workspaces[0]
+            .pane_state(target)
+            .unwrap()
+            .attached_terminal_id
+            .clone();
+        app.state.terminals.get_mut(&terminal_id).unwrap().state = AgentState::Idle;
+        app.state.workspaces[0].pane_state_mut(target).unwrap().seen = false;
+        let active_tab = app.state.workspaces[0].active_tab;
+        assert_ne!(active_tab, background_tab);
+        assert_eq!(
+            app.pane_info(0, target).unwrap().agent_status,
+            crate::api::schema::AgentStatus::Done
+        );
+
+        let response = app.handle_pane_mark_seen(
+            "req".into(),
+            PaneTarget {
+                pane_id: public_target.clone(),
+            },
+        );
+
+        let response: SuccessResponse = serde_json::from_str(&response).unwrap();
+        let ResponseResult::PaneInfo { pane } = response.result else {
+            panic!("expected pane info");
+        };
+        assert_eq!(pane.agent_status, crate::api::schema::AgentStatus::Idle);
+        assert!(!pane.focused);
+        assert_eq!(app.state.workspaces[0].active_tab, active_tab);
+        let events = app.event_hub.events_after(0);
+        assert_eq!(events.len(), 1);
+        assert!(matches!(
+            &events[0].1.data,
+            crate::api::schema::EventData::PaneAgentStatusChanged {
+                pane_id,
+                agent_status: crate::api::schema::AgentStatus::Idle,
+                ..
+            } if *pane_id == public_target
+        ));
+
+        app.handle_pane_mark_seen(
+            "again".into(),
+            PaneTarget {
+                pane_id: public_target,
+            },
+        );
+        assert_eq!(app.event_hub.events_after(0).len(), 1);
+    }
+
+    #[test]
+    fn pane_mark_seen_rejects_unknown_pane() {
+        let (mut app, _) = app_with_test_workspace();
+
+        let response = app.handle_pane_mark_seen(
+            "req".into(),
+            PaneTarget {
+                pane_id: "w9:p9".into(),
+            },
+        );
+
+        let response: ErrorResponse = serde_json::from_str(&response).unwrap();
+        assert_eq!(response.error.code, "pane_not_found");
     }
 
     #[test]

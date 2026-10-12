@@ -24,6 +24,7 @@ pub(super) fn run_pane_command(args: &[String]) -> std::io::Result<i32> {
         "neighbor" => pane_neighbor(&args[1..]),
         "edges" => pane_edges(&args[1..]),
         "focus" => pane_focus(&args[1..]),
+        "mark-seen" => pane_mark_seen(&args[1..]),
         "resize" => pane_resize(&args[1..]),
         "zoom" => pane_zoom(&args[1..]),
         "read" => pane_read(&args[1..]),
@@ -76,6 +77,20 @@ fn pane_list(args: &[String]) -> std::io::Result<i32> {
     super::print_response(&super::send_request(&Request {
         id: "cli:pane:list".into(),
         method: Method::PaneList(PaneListParams { workspace_id }),
+    })?)
+}
+
+fn pane_mark_seen(args: &[String]) -> std::io::Result<i32> {
+    let [raw_pane_id] = args else {
+        eprintln!("usage: herdr pane mark-seen <pane_id>");
+        return Ok(2);
+    };
+
+    super::print_response(&super::send_request(&Request {
+        id: "cli:pane:mark_seen".into(),
+        method: Method::PaneMarkSeen(PaneTarget {
+            pane_id: super::normalize_pane_id(raw_pane_id),
+        }),
     })?)
 }
 
@@ -1679,6 +1694,7 @@ fn print_pane_help() {
     eprintln!("  herdr pane neighbor --direction left|right|up|down [--pane ID|--current]");
     eprintln!("  herdr pane edges [--pane ID|--current]");
     eprintln!("  herdr pane focus --direction left|right|up|down [--pane ID|--current]");
+    eprintln!("  herdr pane mark-seen <pane_id>");
     eprintln!(
         "  herdr pane resize --direction left|right|up|down [--amount FLOAT] [--pane ID|--current]"
     );
