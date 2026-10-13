@@ -102,21 +102,45 @@ fn tree(snapshot: &ClientShellSnapshot) -> SidebarTreeState {
     tree
 }
 
-fn agora(snapshot: &ClientShellSnapshot, tree: &SidebarTreeState) -> Vec<String> {
-    tree_rows(snapshot, tree)
-        .into_iter()
+fn section(snapshot: &ClientShellSnapshot, tree: &SidebarTreeState, running: bool) -> Vec<String> {
+    let rows = tree_rows(snapshot, tree);
+    let split = rows
+        .iter()
+        .position(|row| *row == TreeRow::RunningTitle)
+        .unwrap_or(rows.len());
+    let rows = if running {
+        &rows[split..]
+    } else {
+        &rows[..split]
+    };
+    rows.iter()
         .filter_map(|row| match row {
-            TreeRow::Agora { pane_id, .. } => Some(pane_id),
+            TreeRow::Agora { pane_id, .. } => Some(pane_id.clone()),
             _ => None,
         })
         .collect()
 }
 
+/// AGORA rows: blocked or done.
+fn agora(snapshot: &ClientShellSnapshot, tree: &SidebarTreeState) -> Vec<String> {
+    section(snapshot, tree, false)
+}
+
+/// RODANDO rows: working.
+fn running(snapshot: &ClientShellSnapshot, tree: &SidebarTreeState) -> Vec<String> {
+    section(snapshot, tree, true)
+}
+
+/// Every agent row of a band, waiting ones (`Pending`) and the rest.
 fn band(snapshot: &ClientShellSnapshot, tree: &SidebarTreeState, workspace: usize) -> Vec<String> {
     tree_rows(snapshot, tree)
         .into_iter()
         .filter_map(|row| match row {
             TreeRow::Agent {
+                workspace_index,
+                pane_id,
+            }
+            | TreeRow::Pending {
                 workspace_index,
                 pane_id,
             } if workspace_index == workspace => Some(pane_id),
@@ -187,32 +211,31 @@ fn pending(snapshot: &ClientShellSnapshot, tree: &SidebarTreeState) -> Vec<Strin
 }
 
 #[test]
-fn agora_lists_blocked_done_working_across_spaces_working_first_without_times() {
+fn agora_lists_blocked_and_done_and_rodando_lists_working_across_spaces() {
     let mut projected = spaces();
     let state = tree(&projected);
-    // Working counts as now; without `ult` the rest keeps blocked > done, then
-    // sidebar order.
-    assert_eq!(
-        agora(&projected, &state),
-        ["p_work", "p_brez", "p_block", "p_done"]
-    );
+    // Without `ult` AGORA keeps blocked > done, then sidebar order.
+    assert_eq!(agora(&projected, &state), ["p_block", "p_done"]);
+    assert_eq!(running(&projected, &state), ["p_work", "p_brez"]);
     set_status(&mut projected, "p_a4d", AgentStatus::Done);
-    assert_eq!(
-        agora(&projected, &state),
-        ["p_work", "p_brez", "p_block", "p_done", "p_a4d"]
-    );
+    assert_eq!(agora(&projected, &state), ["p_block", "p_done", "p_a4d"]);
     let rows = tree_rows(&projected, &state);
     assert_eq!(rows[0], TreeRow::AgoraTitle);
     assert!(!rows.contains(&TreeRow::AgoraEmpty));
+    // RODANDO sits right after AGORA.
+    let title = rows
+        .iter()
+        .position(|row| *row == TreeRow::RunningTitle)
+        .unwrap();
+    assert!(matches!(&rows[title - 1], TreeRow::Agora { pane_id, .. } if pane_id == "p_a4d"));
 
-    // Nothing running: one "nada rodando" row once nobody needs anything.
+    // Nothing new: one "nada novo" row; nothing working: no RODANDO.
     for agent in &mut projected.agents {
         agent.agent_status = AgentStatus::Idle;
     }
-    assert_eq!(agora(&projected, &state), ["p_block"]);
-    set_token(&mut projected, "p_block", "precisa", "");
     let rows = tree_rows(&projected, &state);
     assert_eq!(rows[..2], [TreeRow::AgoraTitle, TreeRow::AgoraEmpty]);
+    assert!(!rows.contains(&TreeRow::RunningTitle));
 }
 
 #[test]
@@ -221,83 +244,69 @@ fn agora_is_most_recent_first_by_ult() {
     let state = tree(&projected);
     set_token(&mut projected, "p_block", "ult", "1000");
     set_token(&mut projected, "p_done", "ult", "3000");
-    // Agents without `ult` sort after every timed one; working stays on top.
-    assert_eq!(
-        agora(&projected, &state),
-        ["p_work", "p_brez", "p_done", "p_block"]
-    );
+    assert_eq!(agora(&projected, &state), ["p_done", "p_block"]);
     set_token(&mut projected, "p_block", "ult", "5000");
-    assert_eq!(
-        agora(&projected, &state),
-        ["p_work", "p_brez", "p_block", "p_done"]
-    );
-    // A malformed `ult` counts as missing.
+    assert_eq!(agora(&projected, &state), ["p_block", "p_done"]);
+    // A malformed `ult` counts as missing, and missing sorts last.
     set_token(&mut projected, "p_block", "ult", "ontem");
-    assert_eq!(
-        agora(&projected, &state),
-        ["p_work", "p_brez", "p_done", "p_block"]
-    );
+    assert_eq!(agora(&projected, &state), ["p_done", "p_block"]);
 }
 
 #[test]
-fn fase_bloq_and_precisa_bring_an_idle_agent_into_agora() {
+fn a_seen_agent_waiting_on_the_user_leaves_agora_for_its_band() {
     let mut projected = spaces();
     let mut state = tree(&projected);
     state.set_expanded("ws_2", true);
-    set_token(&mut projected, "p_idle1", "fase", "bloq");
-    set_token(&mut projected, "p_idle1", "ult", "2000");
+    // Seen (idle) and stopped on the user: listed first in its band, not in AGORA.
+    set_token(&mut projected, "p_idle2", "fase", "bloq");
     set_token(&mut projected, "p_a4d", "precisa", "login no Meta");
-    set_token(&mut projected, "p_a4d", "ult", "1000");
-    assert_eq!(
-        agora(&projected, &state),
-        ["p_work", "p_brez", "p_idle1", "p_a4d", "p_block", "p_done"]
-    );
-    assert!(!band(&projected, &state, 0).contains(&"p_idle1".to_owned()));
-    assert!(band(&projected, &state, 1).is_empty());
-    // Other phases leave it in its band.
+    // Not seen yet (done): AGORA, whatever the phase.
+    set_token(&mut projected, "p_done", "fase", "bloq");
+    // Working with a stale phase: RODANDO only.
+    set_token(&mut projected, "p_work", "fase", "bloq");
+    assert_eq!(agora(&projected, &state), ["p_block", "p_done"]);
+    assert_eq!(running(&projected, &state), ["p_work", "p_brez"]);
+    assert_eq!(pending(&projected, &state), ["p_idle2", "p_a4d"]);
+    assert_eq!(band(&projected, &state, 0)[0], "p_idle2");
+    assert_eq!(band(&projected, &state, 1), ["p_a4d"]);
+
+    // Looking at the done agent turns it idle: out of AGORA, into its band.
+    set_status(&mut projected, "p_done", AgentStatus::Idle);
+    assert_eq!(agora(&projected, &state), ["p_block"]);
+    assert!(pending(&projected, &state).contains(&"p_done".to_owned()));
+    // Other phases leave it a plain band row.
     for fase in ["esp", "ok", "", "outra"] {
-        set_token(&mut projected, "p_idle1", "fase", fase);
+        set_token(&mut projected, "p_idle2", "fase", fase);
         assert!(
-            !agora(&projected, &state).contains(&"p_idle1".to_owned()),
+            !pending(&projected, &state).contains(&"p_idle2".to_owned()),
             "{fase}"
         );
+        assert!(band(&projected, &state, 0).contains(&"p_idle2".to_owned()));
     }
 }
 
 #[test]
-fn pending_lists_fase_vez_outside_agora_once_and_hides_when_empty() {
+fn bands_list_waiting_agents_first_most_recent_first_and_nobody_twice() {
     let mut projected = spaces();
     let mut state = tree(&projected);
     for workspace in ["ws_1", "ws_2", "ws_3"] {
         state.set_expanded(workspace, true);
     }
-    assert!(!tree_rows(&projected, &state).contains(&TreeRow::PendingTitle));
     assert!(pending(&projected, &state).is_empty());
 
     set_token(&mut projected, "p_idle2", "fase", "vez");
     set_token(&mut projected, "p_idle2", "ult", "1000");
-    set_token(&mut projected, "p_a4d", "fase", "vez");
-    set_token(&mut projected, "p_a4d", "ult", "4000");
+    set_token(&mut projected, "p_focus", "fase", "vez");
+    set_token(&mut projected, "p_focus", "ult", "4000");
+    set_token(&mut projected, "p_idle1", "ult", "9000");
     set_token(&mut projected, "p_brez_idle", "fase", "vez");
-    // A working agent keeps a stale `fase` and stays in AGORA as running.
-    set_token(&mut projected, "p_work", "fase", "vez");
-    // A done agent with a step left is still news: AGORA, not PENDENTE.
-    set_token(&mut projected, "p_done", "fase", "vez");
+    // Waiting first (most recent first), then the rest, even if more recent.
     assert_eq!(
-        pending(&projected, &state),
-        ["p_a4d", "p_idle2", "p_brez_idle"]
+        band(&projected, &state, 0),
+        ["p_focus", "p_idle2", "p_idle1"]
     );
+    assert_eq!(band(&projected, &state, 2), ["p_brez_idle"]);
     let rows = tree_rows(&projected, &state);
-    let title = rows
-        .iter()
-        .position(|row| *row == TreeRow::PendingTitle)
-        .unwrap();
-    // PENDENTE sits right after AGORA and before the first band.
-    assert!(matches!(rows[title - 1], TreeRow::Agora { .. }));
-    assert!(matches!(rows[title + 4], TreeRow::Header { .. }));
-    assert!(agora(&projected, &state).contains(&"p_work".to_owned()));
-    assert!(agora(&projected, &state).contains(&"p_done".to_owned()));
-    // Nobody is listed twice, and the bands keep only the rest.
     let listed = rows
         .iter()
         .filter_map(|row| row.pane_id().map(str::to_owned))
@@ -307,15 +316,10 @@ fn pending_lists_fase_vez_outside_agora_once_and_hides_when_empty() {
     unique.dedup();
     assert_eq!(unique.len(), listed.len(), "{listed:?}");
     assert_eq!(listed.len(), projected.agents.len());
-    assert_eq!(band(&projected, &state, 0), ["p_idle1", "p_focus"]);
-    assert!(band(&projected, &state, 1).is_empty());
-    assert!(band(&projected, &state, 2).is_empty());
 
-    // Resolved (fase=ok) everywhere: the section goes away.
-    for pane in ["p_idle2", "p_a4d", "p_brez_idle"] {
-        set_token(&mut projected, pane, "fase", "ok");
-    }
-    assert!(!tree_rows(&projected, &state).contains(&TreeRow::PendingTitle));
+    // A collapsed band hides its waiting agents too.
+    state.set_expanded("ws_3", false);
+    assert!(!pending(&projected, &state).contains(&"p_brez_idle".to_owned()));
 }
 
 #[test]
@@ -673,7 +677,7 @@ fn renders_agora_bands_and_parked_sections() {
     for expected in [
         " AGORA",
         "os Bloqueado",
-        "    aprovar o deck",
+        " RODANDO",
         "os Trabalhando",
         "br Update",
         " ▾ gabe-os",
@@ -684,11 +688,18 @@ fn renders_agora_bands_and_parked_sections() {
         " ▸ brez",
         " PARADOS",
         " ▸ company",
+        " ✦ novo  ● com você  ◷ outros",
         " new",
     ] {
         assert!(text.contains(expected), "missing {expected:?}\n{text}");
     }
-    for unexpected in [" spaces", " agents", "Heaven Sent", "Doc do Ali"] {
+    for unexpected in [
+        " spaces",
+        " agents",
+        "Heaven Sent",
+        "Doc do Ali",
+        "aprovar o deck",
+    ] {
         assert!(
             !text.contains(unexpected),
             "unexpected {unexpected:?}\n{text}"
@@ -704,10 +715,10 @@ fn renders_agora_bands_and_parked_sections() {
     // The focused agent is highlighted where it is listed (its band here).
     let (x, y) = agent_row(&state, "p_focus").unwrap();
     assert_eq!(buffer[(x, y)].bg, state.config.palette.active_row_bg);
-    // Sections in visual order: AGORA rows, bands, PARADOS.
+    // Sections in visual order: AGORA, RODANDO, bands, PARADOS.
     // (The client shows a done agent as done only after it saw it complete, so the
     // fixture's p_done reads as idle here and sits in its band.)
-    let ys = ["p_work", "p_brez", "p_block", "p_idle1", "p_done"]
+    let ys = ["p_block", "p_work", "p_brez", "p_idle1", "p_done"]
         .map(|pane| agent_row(&state, pane).unwrap().1);
     assert!(ys.windows(2).all(|pair| pair[0] < pair[1]), "{ys:?}");
     assert!(workspace_row(&state, "ws_3").1 < workspace_row(&state, "ws_4").1);
@@ -803,9 +814,9 @@ fn navigate_mode_walks_agora_bands_and_parked_rows_in_visual_order() {
         on("ws_3", None),
         on("ws_2", None),
         on("ws_4", None),
+        on("ws_1", Some("p_block")),
         on("ws_1", Some("p_work")),
         on("ws_3", Some("p_brez")),
-        on("ws_1", Some("p_block")),
         on("ws_1", None),
     ];
     for step in expected {
@@ -890,7 +901,7 @@ fn cell_of(state: &mut ClientShellState, anchor: &str, needle: &str) -> (u16, u1
 }
 
 #[test]
-fn renders_pending_section_elapsed_times_and_second_lines() {
+fn renders_waiting_agents_in_red_in_their_band_with_counts_on_the_headers() {
     let mut state = tree_state_with(with_phases());
     let text = text(&mut state);
     let ends = |needle: &str, end: &str| {
@@ -901,67 +912,96 @@ fn renders_pending_section_elapsed_times_and_second_lines() {
             "{line:?} should end with {end:?}\n{text}"
         );
     };
-    // AGORA: count on the title, working first ("agora"), then the blocked phase
-    // with its step on a second line.
-    ends(" AGORA", "4");
+    assert!(!text.contains("PENDENTE"), "{text}");
+    ends(" RODANDO", "2");
     ends("os Trabalhando", "agora");
-    ends("os Parado um", "3h");
-    assert!(text.contains("\n    OK p/ criar TST23"), "{text}");
-    // PENDENTE: the step in place of the label, most recent first.
-    ends(" PENDENTE COM VOCÊ", "2");
-    ends(" ➜ a4 ouvir 2 áudios", "5min");
-    ends(" ➜ br enviar 7 rascunhos", "2d");
-    let pending_y = |needle: &str| text.lines().position(|line| line.contains(needle)).unwrap();
-    assert!(pending_y("ouvir 2 áudios") < pending_y("enviar 7 rascunhos"));
-    assert!(pending_y("Parado um") < pending_y("PENDENTE"));
-    assert!(pending_y("enviar 7 rascunhos") < pending_y("▾ gabe-os"));
-    // Band: what a waiting agent waits on, and its time.
-    ends("Parado dois · CI do PR", "2h");
-    // Nobody twice: the pending agents are not in their bands' text.
-    assert_eq!(text.matches("Doc do Ali").count(), 0, "{text}");
-    assert_eq!(text.matches("Heaven Sent").count(), 0, "{text}");
+    // The focused band lists the waiting agent first, by its label, without step or time.
+    ends(" ┃ ● Parado um", "Parado um");
+    for hidden in ["OK p/ criar TST23", "CI do PR", "3h", "2h"] {
+        assert!(!text.contains(hidden), "{hidden:?}\n{text}");
+    }
+    let y = |needle: &str| text.lines().position(|line| line.contains(needle)).unwrap();
+    assert!(y("▾ gabe-os") < y("Parado um"));
+    assert!(y("Parado um") < y("Parado dois"));
+    // Headers count every agent waiting on the user, collapsed or not.
+    ends(" ▾ gabe-os", "●1 1 agentes");
+    ends(" ▸ a4d", "●1 2 agentes");
+    ends(" ▸ brez", "●1 3 agentes");
+    assert!(!text.contains("Doc do Ali"), "{text}");
 
     let palette = state.config.palette.clone();
     let buffer = state.compose(120, 40).unwrap().to_ratatui_buffer().unwrap();
-    let at = cell_of(&mut state, "enviar 7 rascunhos", "2d");
-    assert_eq!(buffer[at].fg, palette.peach, "older than 24h");
-    let at = cell_of(&mut state, "ouvir 2 áudios", "5min");
-    assert_eq!(buffer[at].fg, palette.overlay0);
-    let at = cell_of(&mut state, "ouvir 2 áudios", "➜");
-    assert_eq!(buffer[at].fg, palette.peach);
-    let at = cell_of(&mut state, "OK p/ criar TST23", "OK");
+    // Waiting on the user: red icon and label, red count on the header.
+    let at = cell_of(&mut state, "┃ ● Parado um", "●");
     assert_eq!(buffer[at].fg, palette.red);
-    let at = cell_of(&mut state, "CI do PR", "CI");
+    let at = cell_of(&mut state, "┃ ● Parado um", "Parado");
+    assert_eq!(buffer[at].fg, palette.red);
+    let at = cell_of(&mut state, " ▸ a4d", "●1");
+    assert_eq!(buffer[at].fg, palette.red);
+    // Waiting on someone else: blue clock. Nothing for the user: grey circle.
+    let at = cell_of(&mut state, "Parado dois", "◷");
     assert_eq!(buffer[at].fg, palette.blue);
-    // An idle agent waiting for the user reads as blocked.
-    let at = cell_of(&mut state, "os Parado um", "os Parado um");
-    assert_eq!(buffer[(at.0 - 2, at.1)].fg, palette.red);
+    let at = cell_of(&mut state, "Focado", "○");
+    assert_eq!(buffer[at].fg, palette.overlay0);
 }
 
 #[test]
-fn a_vez_step_shows_in_peach_under_an_agora_row() {
+fn agora_and_rodando_rows_are_one_line_with_one_color_per_meaning() {
     let mut projected = with_phases();
     set_status(&mut projected, "p_a4d", AgentStatus::Blocked);
     let mut state = tree_state_with(projected);
     let text = text(&mut state);
-    // Blocked: AGORA, with the step below, and out of PENDENTE.
-    assert!(text.contains("\n    ouvir 2 áudios"), "{text}");
-    assert!(!text.contains("➜ a4"), "{text}");
+    // Blocked: AGORA, one line, no step below, no longer counted on its band.
+    assert!(text.contains(" ● a4 Doc do Ali"), "{text}");
+    assert!(!text.contains("ouvir 2 áudios"), "{text}");
+    assert!(!line_with(&text, " ▸ a4d").contains('●'), "{text}");
     let palette = state.config.palette.clone();
     let buffer = state.compose(120, 40).unwrap().to_ratatui_buffer().unwrap();
-    let at = cell_of(&mut state, "    ouvir 2 áudios", "ouvir");
-    assert_eq!(buffer[at].fg, palette.peach);
+    let at = cell_of(&mut state, "a4 Doc do Ali", "●");
+    assert_eq!(buffer[at].fg, palette.red);
+    let at = cell_of(&mut state, "os Trabalhando", "◐");
+    assert_eq!(buffer[at].fg, palette.green);
+    // The legend names each color.
+    let at = cell_of(&mut state, "com você", "✦");
+    assert_eq!(buffer[at].fg, palette.yellow);
+    let at = cell_of(&mut state, "com você", "● com");
+    assert_eq!(buffer[at].fg, palette.red);
+    let at = cell_of(&mut state, "com você", "◷");
+    assert_eq!(buffer[at].fg, palette.blue);
 }
 
 #[test]
-fn pending_rows_focus_drag_and_navigate_like_agora_rows() {
+fn a_new_agent_reads_as_an_amber_star_in_agora() {
+    // The client shows done once it saw the agent work and then finish.
+    let mut working = spaces();
+    set_status(&mut working, "p_a4d", AgentStatus::Working);
+    let mut state = tree_state_with(working);
+    let mut finished = spaces();
+    set_status(&mut finished, "p_a4d", AgentStatus::Done);
+    finished
+        .agents
+        .iter_mut()
+        .find(|agent| agent.pane_id == "p_a4d")
+        .unwrap()
+        .state_change_seq = 2;
+    state.set_snapshot(Box::new(finished));
+    let text = text(&mut state);
+    let palette = state.config.palette.clone();
+    let buffer = state.compose(120, 40).unwrap().to_ratatui_buffer().unwrap();
+    assert!(text.contains(" ✦ a4 Doc do Ali"), "{text}");
+    let at = cell_of(&mut state, "a4 Doc do Ali", "✦");
+    assert_eq!(buffer[at].fg, palette.yellow);
+}
+
+#[test]
+fn waiting_rows_focus_drag_and_navigate_like_other_agent_rows() {
     let mut state = tree_state_with(with_phases());
-    let at = agent_row(&state, "p_a4d").expect("pending row is a hit");
+    let at = agent_row(&state, "p_idle1").expect("waiting row is a hit");
     assert!(
-        matches!(&click(&mut state, at)[..], [Method::PaneFocus(target)] if target.pane_id == "p_a4d")
+        matches!(&click(&mut state, at)[..], [Method::PaneFocus(target)] if target.pane_id == "p_idle1")
     );
     // Drag into the pane.
-    let from = agent_row(&state, "p_brez_idle").unwrap();
+    let from = agent_row(&state, "p_idle1").unwrap();
     let pane = state.hits.panes[0].rect;
     let to = (pane.right() - 1, pane.y);
     mouse(&mut state, MouseEventKind::Down(MouseButton::Left), from);
@@ -969,33 +1009,23 @@ fn pending_rows_focus_drag_and_navigate_like_agora_rows() {
     state.compose(120, 40).unwrap();
     let sent = methods(mouse(&mut state, MouseEventKind::Up(MouseButton::Left), to));
     assert!(
-        matches!(&sent[..], [Method::PaneMove(params)] if params.pane_id == "p_brez_idle"),
+        matches!(&sent[..], [Method::PaneMove(params)] if params.pane_id == "p_idle1"),
         "{sent:?}"
     );
 
-    // Navigate mode walks through the pending rows; Enter focuses.
+    // Navigate mode: the first row under the band header is the waiting agent.
     let mut state = tree_state_with(with_phases());
     key(&mut state, &[0x02]);
     key(&mut state, b"w");
-    let mut seen = Vec::new();
-    for _ in 0..20 {
-        key(&mut state, b"\x1b[B");
-        seen.push(cursor(&state));
-        if cursor(&state) == on("ws_2", Some("p_a4d")) {
-            break;
-        }
-    }
-    assert_eq!(cursor(&state), on("ws_2", Some("p_a4d")), "{seen:?}");
-    let next = {
-        key(&mut state, b"\x1b[B");
-        cursor(&state)
-    };
-    assert_eq!(next, on("ws_3", Some("p_brez_idle")));
+    assert_eq!(cursor(&state), on("ws_1", None));
+    key(&mut state, b"\x1b[B");
+    assert_eq!(cursor(&state), on("ws_1", Some("p_idle1")));
+    key(&mut state, b"\x1b[B");
+    assert_eq!(cursor(&state), on("ws_1", Some("p_idle2")));
     key(&mut state, b"\x1b[A");
-    assert_eq!(cursor(&state), on("ws_2", Some("p_a4d")));
     let sent = methods(key(&mut state, b"\r"));
     assert!(
-        matches!(&sent[..], [Method::PaneFocus(target)] if target.pane_id == "p_a4d"),
+        matches!(&sent[..], [Method::PaneFocus(target)] if target.pane_id == "p_idle1"),
         "{sent:?}"
     );
 }
