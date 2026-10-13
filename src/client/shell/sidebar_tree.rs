@@ -2,21 +2,24 @@
 //! "tree"`, alias `"bands"`). One scrollable panel replaces the split
 //! spaces/agents panels:
 //!
-//! * `AGORA`: every blocked, done (unseen) or working agent of every space,
-//!   plus agents carrying a `$precisa` or `fase=bloq` token, most recent first
-//!   (working counts as now, then the `ult` token, agents without `ult` last).
-//!   Each row shows the state icon, the client code (`$cli`) in the client
-//!   color, the label and the elapsed time on the right; a second line shows
-//!   `$precisa` (red), else `$passo` when `fase` is `bloq` (red) or `vez`
-//!   (peach).
-//! * `PENDENTE COM VOCÊ`: agents outside AGORA with `fase=vez`, one row each
-//!   (`➜`, `$cli`, `$passo` instead of the label, elapsed time), most recent
-//!   first. Hidden when empty.
+//! * `AGORA`: every blocked or done (unseen) agent of every space, most
+//!   recent first (by the `ult` token, agents without `ult` last). Each row shows the state icon, the client code
+//!   (`$cli`) in the client color, the label and the elapsed time on the
+//!   right; a second line shows `$precisa` (red), else `$passo` when `fase` is
+//!   `bloq` (red) or `vez` (peach). Seeing a finished agent turns it idle, so
+//!   it leaves AGORA.
+//! * `RODANDO`: every working agent, in the same row format with `agora` on
+//!   the right. Hidden when empty.
 //! * One band per space that has agents, the space with the most recent
-//!   activity first: a header tinted with the client color, `▸/▾ name` and the
-//!   space summary (`$resumo`). Expanding a band lists, behind a `┃` rail and
-//!   most recent first, the agents of that space that are in neither section
-//!   above, so no agent appears twice; `fase=esp` adds `· $passo` in blue.
+//!   activity first: a header tinted with the client color, `▸/▾ name`, how
+//!   many agents wait for the user (`➜N`) and the space summary (`$resumo`).
+//!   Expanding a band lists, behind a `┃` rail, the agents of that space that
+//!   are not in AGORA, so no agent appears twice: first the ones still waiting
+//!   for the user (`$precisa`, `fase=bloq` or `fase=vez`) as `➜` and
+//!   `$precisa` or `$passo` in place of the label, then the rest; each group
+//!   most recent first. The arrow (and `➜N`) is red when an agent is stopped on
+//!   the user (`$precisa` or `bloq`) and peach for a step left (`vez`);
+//!   `fase=esp` adds `· $passo` in blue.
 //!   Bands start collapsed except the one holding the focused pane; a manual
 //!   toggle sticks for the session.
 //! * `PARADOS`: spaces without agents, one compact row each.
@@ -39,14 +42,14 @@ use crate::protocol::ClientShellAgent;
 pub(super) const BAND_TINT: f32 = 0.22;
 const RAIL: &str = "┃";
 const AGORA_TITLE: &str = " AGORA";
-const AGORA_EMPTY: &str = " nada rodando";
-const PENDING_TITLE: &str = " PENDENTE COM VOCÊ";
+const AGORA_EMPTY: &str = " nada novo";
+const RUNNING_TITLE: &str = " RODANDO";
 const PENDING_ICON: &str = "➜";
 const PARKED_TITLE: &str = " PARADOS";
 /// Elapsed time turns peach from this age on.
 const OLD_AFTER_SECS: u64 = 24 * 3600;
 
-/// The navigate cursor on an agent row (AGORA, PENDENTE or band), beyond the space's
+/// The navigate cursor on an agent row (AGORA or band), beyond the space's
 /// band header or PARADOS row.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(super) enum TreeCursor {
@@ -56,15 +59,15 @@ pub(super) enum TreeCursor {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(super) enum TreeRow {
     AgoraTitle,
-    /// "nada rodando" when no agent is blocked, done or working.
+    /// "nada novo" when no agent is blocked or done.
     AgoraEmpty,
-    /// A blocked, done or working agent, or one that needs something.
+    /// A blocked or done agent under AGORA, or a working one under RODANDO.
     Agora {
         workspace_index: usize,
         pane_id: String,
     },
-    PendingTitle,
-    /// An agent outside AGORA that left a step for the user (`fase=vez`).
+    RunningTitle,
+    /// An agent of an expanded band that still waits for the user.
     Pending {
         workspace_index: usize,
         pane_id: String,
@@ -102,7 +105,7 @@ impl TreeRow {
                 workspace_index, ..
             }
             | Self::Parked { workspace_index } => Some(*workspace_index),
-            Self::AgoraTitle | Self::AgoraEmpty | Self::PendingTitle | Self::ParkedTitle => None,
+            Self::AgoraTitle | Self::AgoraEmpty | Self::RunningTitle | Self::ParkedTitle => None,
         }
     }
 
@@ -222,17 +225,21 @@ fn recency(agent: &ClientShellAgent) -> Option<u64> {
     }
 }
 
-/// AGORA: blocked, done (unseen) or working, or carrying `$precisa` or
-/// `fase=bloq`.
+/// AGORA: blocked, done (unseen) or working. An idle agent that waits for the
+/// user was already seen and goes to PENDENTE instead.
 pub(super) fn in_now(agent: &ClientShellAgent) -> bool {
     in_agora(agent.agent_status)
-        || token_of(agent, "precisa").is_some()
-        || fase(agent) == Some(Fase::Bloq)
 }
 
-/// PENDENTE COM VOCÊ: outside AGORA, with a step left for the user.
+/// Stopped on the user: `$precisa` or `fase=bloq`, not while it works.
+pub(super) fn waits_on_user(agent: &ClientShellAgent) -> bool {
+    !working(agent) && (token_of(agent, "precisa").is_some() || fase(agent) == Some(Fase::Bloq))
+}
+
+/// Outside AGORA, stopped on the user or with a step left: listed first in
+/// its band and counted on the band header.
 pub(super) fn is_pending(agent: &ClientShellAgent) -> bool {
-    !in_now(agent) && fase(agent) == Some(Fase::Vez)
+    !in_now(agent) && (waits_on_user(agent) || fase(agent) == Some(Fase::Vez))
 }
 
 /// "agora" under a minute, then "Nmin", "Nh", "Nd" (rounded down).
@@ -300,8 +307,7 @@ impl SidebarTreeState {
     }
 }
 
-/// Visible rows in visual order: AGORA, PENDENTE COM VOCÊ, the bands,
-/// PARADOS.
+/// Visible rows in visual order: AGORA, RODANDO, the bands, PARADOS.
 pub(super) fn tree_rows(snapshot: &ClientShellSnapshot, tree: &SidebarTreeState) -> Vec<TreeRow> {
     use std::cmp::Reverse;
     let index_of = |workspace_id: &str| {
@@ -310,12 +316,12 @@ pub(super) fn tree_rows(snapshot: &ClientShellSnapshot, tree: &SidebarTreeState)
             .iter()
             .position(|workspace| workspace.workspace_id == workspace_id)
     };
-    let mut agora = snapshot
+    let (mut running, mut agora): (Vec<_>, Vec<_>) = snapshot
         .agents
         .iter()
         .filter(|agent| in_now(agent))
         .filter_map(|agent| Some((index_of(&agent.workspace_id)?, agent)))
-        .collect::<Vec<_>>();
+        .partition(|(_, agent)| working(agent));
     agora.sort_by_key(|(workspace_index, agent)| {
         (
             Reverse(recency(agent)),
@@ -323,35 +329,24 @@ pub(super) fn tree_rows(snapshot: &ClientShellSnapshot, tree: &SidebarTreeState)
             *workspace_index,
         )
     });
-    let mut rows = vec![TreeRow::AgoraTitle];
-    if agora.is_empty() {
-        rows.push(TreeRow::AgoraEmpty);
-    }
-    rows.extend(
-        agora
+    running.sort_by_key(|(workspace_index, _)| *workspace_index);
+    let as_rows = |agents: Vec<(usize, &ClientShellAgent)>| {
+        agents
             .into_iter()
             .map(|(workspace_index, agent)| TreeRow::Agora {
                 workspace_index,
                 pane_id: agent.pane_id.clone(),
-            }),
-    );
-    let mut pending = snapshot
-        .agents
-        .iter()
-        .filter(|agent| is_pending(agent))
-        .filter_map(|agent| Some((index_of(&agent.workspace_id)?, agent)))
-        .collect::<Vec<_>>();
-    pending.sort_by_key(|(workspace_index, agent)| (Reverse(recency(agent)), *workspace_index));
-    if !pending.is_empty() {
-        rows.push(TreeRow::PendingTitle);
-        rows.extend(
-            pending
-                .into_iter()
-                .map(|(workspace_index, agent)| TreeRow::Pending {
-                    workspace_index,
-                    pane_id: agent.pane_id.clone(),
-                }),
-        );
+            })
+            .collect::<Vec<_>>()
+    };
+    let mut rows = vec![TreeRow::AgoraTitle];
+    if agora.is_empty() {
+        rows.push(TreeRow::AgoraEmpty);
+    }
+    rows.extend(as_rows(agora));
+    if !running.is_empty() {
+        rows.push(TreeRow::RunningTitle);
+        rows.extend(as_rows(running));
     }
     let mut parked = Vec::new();
     let mut bands = Vec::new();
@@ -377,11 +372,16 @@ pub(super) fn tree_rows(snapshot: &ClientShellSnapshot, tree: &SidebarTreeState)
             expanded,
         });
         if expanded {
-            let mut rest = agents
+            let (mut waiting, mut rest): (Vec<_>, Vec<_>) = agents
                 .into_iter()
-                .filter(|agent| !in_now(agent) && !is_pending(agent))
-                .collect::<Vec<_>>();
+                .filter(|agent| !in_now(agent))
+                .partition(|agent| is_pending(agent));
+            waiting.sort_by_key(|agent| Reverse(recency(agent)));
             rest.sort_by_key(|agent| Reverse(recency(agent)));
+            rows.extend(waiting.into_iter().map(|agent| TreeRow::Pending {
+                workspace_index,
+                pane_id: agent.pane_id.clone(),
+            }));
             rows.extend(rest.into_iter().map(|agent| TreeRow::Agent {
                 workspace_index,
                 pane_id: agent.pane_id.clone(),
@@ -538,26 +538,25 @@ enum RenderedRow {
         count: usize,
     },
     AgoraEmpty,
+    RunningTitle {
+        count: usize,
+    },
     Agora {
         client: Color,
         row: AgentRow,
-        /// Icon status: an idle agent that waits for the user reads as blocked.
-        shown: crate::api::schema::AgentStatus,
         cli: Option<String>,
         /// Second line: `$precisa`, else `$passo` for `fase` bloq or vez.
         detail: Option<(String, Color)>,
         elapsed: Elapsed,
     },
-    PendingTitle {
-        count: usize,
-    },
     Pending {
         client: Color,
         pane_id: String,
         focused: bool,
-        cli: Option<String>,
-        /// `$passo`, else the label.
+        /// `$precisa`, else `$passo`, else the label.
         text: String,
+        /// Stopped on the user (`$precisa` or `bloq`): red arrow.
+        urgent: bool,
         elapsed: Elapsed,
     },
     Header {
@@ -565,6 +564,9 @@ enum RenderedRow {
         client: Color,
         expanded: bool,
         summary: String,
+        /// Agents of the space waiting for the user, and whether one is
+        /// stopped on the user.
+        waiting: (usize, bool),
     },
     Agent {
         client: Color,
@@ -610,7 +612,7 @@ fn row_gaps(rows: &[RenderedRow], heights: &[u16], body_height: u16) -> Vec<u16>
             && (Some(index) == first_header
                 || matches!(
                     rows[index],
-                    RenderedRow::ParkedTitle | RenderedRow::PendingTitle { .. }
+                    RenderedRow::ParkedTitle | RenderedRow::RunningTitle { .. }
                 ))
     };
     let band_break = |index: usize| {
@@ -659,16 +661,18 @@ fn rendered_rows(
     config: &ClientShellConfig,
     now: u64,
 ) -> Vec<RenderedRow> {
-    use crate::api::schema::AgentStatus;
     let palette = &config.palette;
-    let agora_count = tree_rows
+    let running_at = tree_rows
         .iter()
-        .filter(|row| matches!(row, TreeRow::Agora { .. }))
-        .count();
-    let pending_count = tree_rows
-        .iter()
-        .filter(|row| matches!(row, TreeRow::Pending { .. }))
-        .count();
+        .position(|row| *row == TreeRow::RunningTitle)
+        .unwrap_or(tree_rows.len());
+    let agora_rows = |rows: &[TreeRow]| {
+        rows.iter()
+            .filter(|row| matches!(row, TreeRow::Agora { .. }))
+            .count()
+    };
+    let agora_count = agora_rows(&tree_rows[..running_at]);
+    let running_count = agora_rows(&tree_rows[running_at..]);
     tree_rows
         .iter()
         .filter_map(|row| {
@@ -679,6 +683,9 @@ fn rendered_rows(
             Some(match row {
                 TreeRow::AgoraTitle => RenderedRow::AgoraTitle { count: agora_count },
                 TreeRow::AgoraEmpty => RenderedRow::AgoraEmpty,
+                TreeRow::RunningTitle => RenderedRow::RunningTitle {
+                    count: running_count,
+                },
                 TreeRow::Agora { pane_id, .. } => {
                     let agent = find_agent(snapshot, pane_id)?;
                     let row = tree_agent_row(snapshot, pane_id, config)?;
@@ -698,29 +705,18 @@ fn rendered_rows(
                             }
                             _ => None,
                         });
-                    let waits = precisa.is_some() || fase == Some(Fase::Bloq);
-                    let shown = if waits
-                        && matches!(row.status, AgentStatus::Idle | AgentStatus::Unknown)
-                    {
-                        AgentStatus::Blocked
-                    } else {
-                        row.status
-                    };
                     RenderedRow::Agora {
                         client: client?,
                         cli: token_of(agent, "cli").map(str::to_owned),
                         detail,
                         elapsed: agent_elapsed(agent, now),
-                        shown,
                         row,
                     }
                 }
-                TreeRow::PendingTitle => RenderedRow::PendingTitle {
-                    count: pending_count,
-                },
                 TreeRow::Pending { pane_id, .. } => {
                     let agent = find_agent(snapshot, pane_id)?;
-                    let text = token_of(agent, "passo")
+                    let text = token_of(agent, "precisa")
+                        .or_else(|| token_of(agent, "passo"))
                         .map(str::to_owned)
                         .or_else(|| {
                             tree_agent_row(snapshot, pane_id, config)?
@@ -748,8 +744,8 @@ fn rendered_rows(
                         client: client?,
                         pane_id: pane_id.clone(),
                         focused: agent.focused,
-                        cli: token_of(agent, "cli").map(str::to_owned),
                         text,
+                        urgent: waits_on_user(agent),
                         elapsed: agent_elapsed(agent, now),
                     }
                 }
@@ -761,6 +757,7 @@ fn rendered_rows(
                     client: client?,
                     expanded: *expanded,
                     summary: header_summary(workspace?, config),
+                    waiting: workspace_waiting(snapshot, &workspace?.workspace_id),
                 },
                 TreeRow::Agent { pane_id, .. } => {
                     let agent = find_agent(snapshot, pane_id)?;
@@ -899,8 +896,8 @@ pub(super) fn render_sidebar_tree(
             RenderedRow::AgoraTitle { count } => {
                 render_section_title(buffer, rect, AGORA_TITLE, Some(*count), label, palette);
             }
-            RenderedRow::PendingTitle { count } => {
-                render_section_title(buffer, rect, PENDING_TITLE, Some(*count), label, palette);
+            RenderedRow::RunningTitle { count } => {
+                render_section_title(buffer, rect, RUNNING_TITLE, Some(*count), label, palette);
             }
             RenderedRow::ParkedTitle => {
                 render_section_title(buffer, rect, PARKED_TITLE, None, label, palette);
@@ -920,7 +917,6 @@ pub(super) fn render_sidebar_tree(
             RenderedRow::Agora {
                 client,
                 row,
-                shown,
                 cli,
                 detail,
                 elapsed,
@@ -930,7 +926,6 @@ pub(super) fn render_sidebar_tree(
                     rect,
                     AgoraLine {
                         row,
-                        shown: *shown,
                         client: *client,
                         cli: cli.as_deref(),
                         detail: detail.as_ref().map(|(text, color)| (text.as_str(), *color)),
@@ -945,16 +940,16 @@ pub(super) fn render_sidebar_tree(
                 client,
                 pane_id,
                 focused,
-                cli,
                 text,
+                urgent,
                 elapsed,
             } => {
                 render_pending_row(
                     buffer,
                     rect,
                     *client,
-                    cli.as_deref(),
                     text,
+                    *urgent,
                     elapsed.as_ref(),
                     *focused,
                     selected,
@@ -967,6 +962,7 @@ pub(super) fn render_sidebar_tree(
                 client,
                 expanded,
                 summary,
+                waiting,
             } => {
                 let workspace = &snapshot.workspaces[*workspace_index];
                 let dragged = state.dragged_workspace_id == Some(workspace.workspace_id.as_str());
@@ -978,7 +974,7 @@ pub(super) fn render_sidebar_tree(
                     band_background(*client, palette)
                 };
                 render_band_header(
-                    buffer, rect, workspace, *expanded, summary, background, palette,
+                    buffer, rect, workspace, *expanded, summary, *waiting, background, palette,
                 );
                 hits.workspaces.push(WorkspaceHit {
                     rect,
@@ -1181,7 +1177,6 @@ fn label_spans<'a>(
 
 struct AgoraLine<'a> {
     row: &'a AgentRow,
-    shown: crate::api::schema::AgentStatus,
     client: Color,
     cli: Option<&'a str>,
     detail: Option<(&'a str, Color)>,
@@ -1202,8 +1197,8 @@ fn render_agora_row(
     use ratatui::text::Span;
     let palette = &config.palette;
     let row = line.row;
-    let status_style = Style::default().fg(status_color(line.shown, palette));
-    let icon = status_icon(line.shown, config.status_indicators);
+    let status_style = Style::default().fg(status_color(line.row.status, palette));
+    let icon = status_icon(line.row.status, config.status_indicators);
     let mut spans = vec![
         Span::raw(" "),
         Span::styled(icon.to_owned(), status_style),
@@ -1263,31 +1258,26 @@ fn render_pending_row(
     buffer: &mut Buffer,
     rect: Rect,
     client: Color,
-    cli: Option<&str>,
     text: &str,
+    urgent: bool,
     elapsed: Option<&(String, bool)>,
     focused: bool,
     selected: bool,
     palette: &Palette,
 ) {
     use ratatui::text::Span;
-    let mut spans = vec![
+    let spans = vec![
+        Span::raw(" "),
+        Span::styled(RAIL, Style::default().fg(client)),
         Span::raw(" "),
         Span::styled(
             PENDING_ICON,
             Style::default()
-                .fg(palette.peach)
+                .fg(waiting_color(urgent, palette))
                 .add_modifier(Modifier::BOLD),
         ),
         Span::raw(" "),
     ];
-    if let Some(cli) = cli {
-        spans.push(Span::styled(
-            cli.to_owned(),
-            Style::default().fg(client).add_modifier(Modifier::BOLD),
-        ));
-        spans.push(Span::raw(" "));
-    }
     let style = if focused || selected {
         Style::default()
             .fg(palette.text)
@@ -1340,6 +1330,7 @@ fn render_band_header(
     workspace: &ClientShellWorkspace,
     expanded: bool,
     summary: &str,
+    waiting: (usize, bool),
     background: Color,
     palette: &Palette,
 ) {
@@ -1354,9 +1345,12 @@ fn render_band_header(
         text,
     );
     let inner = rect.width.saturating_sub(4) as usize;
+    let count = (waiting.0 > 0).then(|| format!("{PENDING_ICON}{}", waiting.0));
+    let count_width = count.as_ref().map_or(0, |count| count.width() + 1);
     let summary_width = summary.width();
     let name_width = workspace.label.width();
-    let show_summary = !summary.is_empty() && name_width + 2 + summary_width <= inner;
+    let show_summary =
+        !summary.is_empty() && name_width + 2 + count_width + summary_width <= inner;
     let name = crate::ui::truncate_end(&workspace.label, inner);
     render::put_text(
         buffer,
@@ -1375,6 +1369,46 @@ fn render_band_header(
             Style::default().fg(palette.subtext0).bg(background),
         );
     }
+    // `➜N` just left of the summary, or at the right edge when it does not fit.
+    if let Some(count) = count {
+        let right = rect.right().saturating_sub(1)
+            - if show_summary { summary_width as u16 + 1 } else { 0 };
+        let width = count.width() as u16;
+        if rect.x + 3 + name_width as u16 + 1 + width <= right {
+            render::put_text(
+                buffer,
+                right - width,
+                rect.y,
+                width,
+                &count,
+                Style::default()
+                    .fg(waiting_color(waiting.1, palette))
+                    .bg(background)
+                    .add_modifier(Modifier::BOLD),
+            );
+        }
+    }
+}
+
+/// Red when an agent is stopped on the user, peach for a step left.
+fn waiting_color(urgent: bool, palette: &Palette) -> Color {
+    if urgent {
+        palette.red
+    } else {
+        palette.peach
+    }
+}
+
+/// How many agents of the space wait for the user outside AGORA, and whether
+/// one of them is stopped on the user.
+fn workspace_waiting(snapshot: &ClientShellSnapshot, workspace_id: &str) -> (usize, bool) {
+    snapshot
+        .agents
+        .iter()
+        .filter(|agent| agent.workspace_id == workspace_id && is_pending(agent))
+        .fold((0, false), |(count, urgent), agent| {
+            (count + 1, urgent || waits_on_user(agent))
+        })
 }
 
 /// "┃ ◐ label · passo      5h": a rail in the client color, then the
