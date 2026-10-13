@@ -925,6 +925,8 @@ pub(crate) struct ClientShellState {
     pub(super) collapsed_groups: HashSet<String>,
     /// Collapse state of the tree sidebar layout (client session only).
     pub(super) sidebar_tree: super::sidebar_tree::SidebarTreeState,
+    /// Wall-clock minute of the tree layout's last elapsed-time repaint.
+    pub(super) sidebar_tree_minute: Option<u64>,
     pub(super) remote_collapsed_groups: HashMap<ClientEndpointId, HashSet<String>>,
     pub(super) workspace_scroll: usize,
     pub(super) agent_scroll: usize,
@@ -1094,6 +1096,7 @@ impl ClientShellState {
             agent_press: None,
             collapsed_groups: preferences.collapsed_groups.into_iter().collect(),
             sidebar_tree: Default::default(),
+            sidebar_tree_minute: None,
             remote_collapsed_groups,
             workspace_scroll: 0,
             agent_scroll: 0,
