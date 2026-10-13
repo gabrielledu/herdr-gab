@@ -1611,6 +1611,10 @@ impl ClientShellState {
                 return;
             }
             if let Some(press) = self.workspace_press.take() {
+                if self.tree_header_click_toggles(&press) {
+                    outcome.repaint = true;
+                    return;
+                }
                 self.finish_endpoint_workspace_press(press, outcome);
                 return;
             }

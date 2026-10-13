@@ -1085,6 +1085,22 @@
           "description": "Expanded Space sidebar layout. Entries may be token strings or inline { token, fg, bold, dim, rules } style tables. Text-valued built-ins and $name metadata tokens accept up to 16 ordered rules using equals, contains, starts_with, gt, or lt; the first match overrides specified styles. Text conditions optionally accept ignore_case for ASCII matching; numeric conditions require full finite numbers. state_icon and git_status accept fixed styles only. At most 16 rows and 16 tokens per row."
         },
         {
+          "key": "ui.sidebar.layout",
+          "type": "enum",
+          "default": "\"split\"",
+          "description": "Expanded desktop sidebar arrangement. \"split\" keeps the Spaces panel above the Agents panel. \"tree\" (alias \"bands\") uses one panel: AGORA lists every blocked, done or working agent with its $cli code, label and, when blocked, $precisa; then one band per space with agents, tinted with the color its workspace token resolves to in ui.sidebar.spaces.rows (accent otherwise) and showing that row's other tokens on the right; expanding a band lists its remaining agents; spaces without agents sit under PARADOS. Bands start collapsed except the focused space; clicking a band header toggles it for the client session. The collapsed sidebar, mobile layout and multi-machine sidebar are unchanged.",
+          "values": [
+            "split",
+            "tree"
+          ]
+        },
+        {
+          "key": "ui.sidebar.tree.agent_rows",
+          "type": "list of token rows",
+          "default": "[[\"state_icon\", \"$rotulo\"]]",
+          "description": "Agent rows of the tree layout, in the same format as ui.sidebar.agents.rows. A row that would show only the state icon falls back to the stripped terminal title, then the agent name. AGORA rows use the first row."
+        },
+        {
           "key": "ui.accent",
           "type": "color",
           "default": "\"cyan\"",

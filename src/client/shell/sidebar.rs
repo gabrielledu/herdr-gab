@@ -204,6 +204,12 @@ pub(crate) fn render_sidebar(
     state: &mut ShellRenderState<'_>,
     hits: &mut ShellHitMap,
 ) {
+    if config.sidebar_layout == crate::config::SidebarLayoutConfig::Tree {
+        super::super::sidebar_tree::render_sidebar_tree(
+            buffer, area, snapshot, config, state, hits,
+        );
+        return;
+    }
     let palette = &config.palette;
     render_sidebar_background(buffer, area, palette);
     hits.sidebar_divider = if area.is_empty() {

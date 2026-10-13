@@ -77,6 +77,8 @@ impl ClientShellState {
             reveal_navigation_workspace: &mut self.reveal_navigation_workspace,
             dragged_workspace_id: None,
             workspace_drop_indicator_row: None,
+            sidebar_tree: &self.sidebar_tree,
+            navigate_tree_item: None,
         };
         if let Some(snapshot) = local_snapshot {
             render::render_sidebar(
@@ -154,6 +156,9 @@ impl ClientShellState {
     ) -> Option<crate::client::frame_output::ComposedFrame> {
         self.last_composed_at = Some(std::time::Instant::now());
         self.selection_repaint_deadline = None;
+        if self.mode != ClientShellMode::Navigate {
+            self.navigate_tree_item = None;
+        }
         if self.last_composed_size != Some((cols, rows)) && self.mode == ClientShellMode::Navigate {
             self.reveal_navigation_workspace = true;
             self.reveal_mobile_workspace = true;
@@ -233,6 +238,11 @@ impl ClientShellState {
                 reveal_navigation_workspace: &mut self.reveal_navigation_workspace,
                 dragged_workspace_id,
                 workspace_drop_indicator_row,
+                sidebar_tree: &self.sidebar_tree,
+                navigate_tree_item: self
+                    .navigate_tree_item
+                    .as_ref()
+                    .filter(|_| valid_navigation_target),
             },
         );
         self.hits.panes = surface

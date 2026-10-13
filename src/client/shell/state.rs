@@ -23,6 +23,9 @@ pub(crate) struct ClientShellConfig {
     pub(super) hide_tab_bar_when_single_tab: bool,
     pub(super) spaces: SpacesSidebarConfig,
     pub(super) agents: crate::config::AgentsSidebarConfig,
+    pub(super) sidebar_layout: crate::config::SidebarLayoutConfig,
+    /// `ui.sidebar.tree.agent_rows`, resolved like `agents.rows`.
+    pub(super) tree_agents: crate::config::AgentsSidebarConfig,
     pub(super) agent_panel_sort: crate::config::AgentPanelSortConfig,
     pub(super) status_indicators: crate::config::StatusIndicatorStyle,
     pub(super) sound_enabled: bool,
@@ -920,6 +923,8 @@ pub(crate) struct ClientShellState {
     pub(super) tab_press: Option<ClientTabPress>,
     pub(super) agent_press: Option<ClientAgentPress>,
     pub(super) collapsed_groups: HashSet<String>,
+    /// Collapse state of the tree sidebar layout (client session only).
+    pub(super) sidebar_tree: super::sidebar_tree::SidebarTreeState,
     pub(super) remote_collapsed_groups: HashMap<ClientEndpointId, HashSet<String>>,
     pub(super) workspace_scroll: usize,
     pub(super) agent_scroll: usize,
@@ -940,6 +945,8 @@ pub(crate) struct ClientShellState {
     pub(super) collapsed_endpoints: HashSet<ClientEndpointId>,
     pub(super) mode: ClientShellMode,
     pub(super) navigate_workspace_id: Option<WorkspaceNavigationTarget>,
+    /// Bands layout: the navigate cursor sits on this row of the space instead of its header.
+    pub(super) navigate_tree_item: Option<super::sidebar_tree::TreeCursor>,
     pub(super) pending_workspace_highlight: Option<PendingWorkspaceHighlight>,
     pub(super) reveal_navigation_workspace: bool,
     pub(super) overlay: Option<ClientShellOverlay>,
@@ -1086,6 +1093,7 @@ impl ClientShellState {
             tab_press: None,
             agent_press: None,
             collapsed_groups: preferences.collapsed_groups.into_iter().collect(),
+            sidebar_tree: Default::default(),
             remote_collapsed_groups,
             workspace_scroll: 0,
             agent_scroll: 0,
@@ -1106,6 +1114,7 @@ impl ClientShellState {
             collapsed_endpoints: HashSet::new(),
             mode: ClientShellMode::Terminal,
             navigate_workspace_id: None,
+            navigate_tree_item: None,
             pending_workspace_highlight: None,
             reveal_navigation_workspace: false,
             overlay,
@@ -1615,6 +1624,9 @@ impl ClientShellState {
             }
         }
         self.snapshot = Some(snapshot);
+        if let Some(snapshot) = self.snapshot.as_deref() {
+            self.sidebar_tree.reconcile(snapshot);
+        }
         self.reconcile_pending_workspace_highlight();
         let pending_surface = self.pending_pane_surface.take();
         if let Some(surface) = pending_surface {

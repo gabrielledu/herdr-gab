@@ -97,6 +97,11 @@ impl ClientShellState {
     }
 
     pub(super) fn move_navigate_workspace(&mut self, delta: isize) {
+        if self.tree_layout_active() && self.snapshot.is_some() && self.pane_surface.is_some() {
+            self.move_navigate_tree(delta);
+            return;
+        }
+        self.navigate_tree_item = None;
         let mobile = self.mobile_layout_active();
         let surface_available = self.snapshot.is_some() && self.pane_surface.is_some();
         let empty_collapsed_groups = HashSet::new();
@@ -164,6 +169,9 @@ impl ClientShellState {
     }
 
     pub(super) fn accept_navigate_workspace(&mut self, outcome: &mut ClientShellInput) {
+        if self.accept_navigate_tree_item(outcome) {
+            return;
+        }
         let Some(target) = self.navigate_workspace_id.clone() else {
             self.mode = self.copy_or_terminal_mode();
             outcome.repaint = true;

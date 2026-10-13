@@ -652,6 +652,7 @@ impl ClientShellState {
         if key.code == KeyCode::Esc || self.config.keybinds.matches_prefix(key) {
             self.mode = self.copy_or_terminal_mode();
             self.navigate_workspace_id = None;
+            self.navigate_tree_item = None;
             outcome.repaint = true;
             return;
         }
@@ -684,6 +685,9 @@ impl ClientShellState {
         let (code, modifiers) = crate::config::normalize_key_combo((key.code, key.modifiers));
         if code == KeyCode::Enter && modifiers.is_empty() {
             self.accept_navigate_workspace(outcome);
+            return;
+        }
+        if modifiers.is_empty() && self.route_tree_navigate_key(code, outcome) {
             return;
         }
         if self.workspace_preview_action_blocked() {

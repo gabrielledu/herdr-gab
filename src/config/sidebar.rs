@@ -475,11 +475,57 @@ impl Default for SpacesSidebarConfig {
     }
 }
 
+/// How the expanded desktop sidebar arranges spaces and agents.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Deserialize, Serialize)]
+#[serde(rename_all = "lowercase")]
+pub enum SidebarLayoutConfig {
+    /// Spaces panel on top, agents panel below (upstream behaviour).
+    #[default]
+    Split,
+    /// One panel: active agents under "AGORA", one collapsible band per space
+    /// with its idle agents, spaces without agents under "PARADOS". `"bands"`
+    /// is accepted as an alias.
+    #[serde(alias = "bands")]
+    Tree,
+}
+
+/// Rows for the agent children of the tree layout.
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
+#[serde(default)]
+pub struct TreeSidebarConfig {
+    #[serde(deserialize_with = "deserialize_sidebar_rows")]
+    pub agent_rows: AgentSidebarRows,
+}
+
+impl Default for TreeSidebarConfig {
+    fn default() -> Self {
+        Self {
+            agent_rows: vec![vec![
+                AgentSidebarToken::StateIcon,
+                AgentSidebarToken::Custom("rotulo".into()),
+            ]],
+        }
+    }
+}
+
+impl TreeSidebarConfig {
+    /// The child rows as an agents layout, so they resolve like `agents.rows`.
+    pub(crate) fn as_agents_config(&self) -> AgentsSidebarConfig {
+        AgentsSidebarConfig {
+            rows: self.agent_rows.clone(),
+            rows_by_agent: BTreeMap::new(),
+            row_gap: 0,
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Default, Deserialize, Serialize)]
 #[serde(default)]
 pub struct SidebarConfig {
+    pub layout: SidebarLayoutConfig,
     pub agents: AgentsSidebarConfig,
     pub spaces: SpacesSidebarConfig,
+    pub tree: TreeSidebarConfig,
 }
 
 #[cfg(test)]
@@ -511,6 +557,43 @@ mod tests {
             ]
         );
         assert_eq!(config.spaces.row_gap, 0);
+    }
+
+    #[test]
+    fn layout_defaults_to_split_and_parses_tree_with_agent_rows() {
+        let config = SidebarConfig::default();
+        assert_eq!(config.layout, SidebarLayoutConfig::Split);
+        assert_eq!(
+            config.tree.agent_rows,
+            vec![vec![
+                AgentSidebarToken::StateIcon,
+                AgentSidebarToken::Custom("rotulo".into()),
+            ]]
+        );
+
+        let config: crate::config::Config = toml::from_str(
+            r##"
+[ui.sidebar]
+layout = "tree"
+
+[ui.sidebar.tree]
+agent_rows = [["state_icon", { token = "$rotulo", rules = [{ equals = "x", bold = true }] }], ["terminal_title_stripped"]]
+"##,
+        )
+        .expect("tree sidebar config");
+        assert_eq!(config.ui.sidebar.layout, SidebarLayoutConfig::Tree);
+        assert_eq!(config.ui.sidebar.tree.agent_rows.len(), 2);
+        assert_eq!(
+            config.ui.sidebar.tree.agent_rows[1],
+            vec![AgentSidebarToken::TerminalTitleStripped]
+        );
+
+        assert!(
+            toml::from_str::<crate::config::Config>("[ui.sidebar]\nlayout = \"grid\"\n").is_err()
+        );
+        let alias: crate::config::Config =
+            toml::from_str("[ui.sidebar]\nlayout = \"bands\"\n").expect("bands alias");
+        assert_eq!(alias.ui.sidebar.layout, SidebarLayoutConfig::Tree);
     }
 
     #[test]

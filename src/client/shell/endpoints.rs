@@ -667,6 +667,9 @@ impl ClientShellState {
         };
         if changed {
             self.snapshot = self.endpoints[index].snapshot.clone();
+            if let Some(snapshot) = self.snapshot.as_deref() {
+                self.sidebar_tree.reconcile(snapshot);
+            }
         }
         changed
     }

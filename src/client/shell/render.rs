@@ -248,6 +248,8 @@ pub(super) struct ShellRenderState<'a> {
     pub(super) reveal_navigation_workspace: &'a mut bool,
     pub(super) dragged_workspace_id: Option<&'a str>,
     pub(super) workspace_drop_indicator_row: Option<u16>,
+    pub(super) sidebar_tree: &'a super::sidebar_tree::SidebarTreeState,
+    pub(super) navigate_tree_item: Option<&'a super::sidebar_tree::TreeCursor>,
 }
 
 pub(super) fn render_shell(
