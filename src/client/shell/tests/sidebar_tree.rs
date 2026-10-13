@@ -677,7 +677,6 @@ fn renders_agora_bands_and_parked_sections() {
     for expected in [
         " AGORA",
         "os Bloqueado",
-        "    aprovar o deck",
         " RODANDO",
         "os Trabalhando",
         "br Update",
@@ -689,11 +688,18 @@ fn renders_agora_bands_and_parked_sections() {
         " ▸ brez",
         " PARADOS",
         " ▸ company",
+        " ✦ novo  ● com você  ◷ outros",
         " new",
     ] {
         assert!(text.contains(expected), "missing {expected:?}\n{text}");
     }
-    for unexpected in [" spaces", " agents", "Heaven Sent", "Doc do Ali"] {
+    for unexpected in [
+        " spaces",
+        " agents",
+        "Heaven Sent",
+        "Doc do Ali",
+        "aprovar o deck",
+    ] {
         assert!(
             !text.contains(unexpected),
             "unexpected {unexpected:?}\n{text}"
@@ -895,7 +901,7 @@ fn cell_of(state: &mut ClientShellState, anchor: &str, needle: &str) -> (u16, u1
 }
 
 #[test]
-fn renders_waiting_agents_in_their_band_with_counts_on_the_headers() {
+fn renders_waiting_agents_in_red_in_their_band_with_counts_on_the_headers() {
     let mut state = tree_state_with(with_phases());
     let text = text(&mut state);
     let ends = |needle: &str, end: &str| {
@@ -907,64 +913,84 @@ fn renders_waiting_agents_in_their_band_with_counts_on_the_headers() {
         );
     };
     assert!(!text.contains("PENDENTE"), "{text}");
-    // RODANDO: count on the title, "agora" on the right.
     ends(" RODANDO", "2");
     ends("os Trabalhando", "agora");
-    // The focused band lists the waiting agent first, its step in place of the label.
-    ends(" ┃ ➜ OK p/ criar TST23", "3h");
-    assert!(!text.contains("Parado um"), "{text}");
+    // The focused band lists the waiting agent first, by its label, without step or time.
+    ends(" ┃ ● Parado um", "Parado um");
+    for hidden in ["OK p/ criar TST23", "CI do PR", "3h", "2h"] {
+        assert!(!text.contains(hidden), "{hidden:?}\n{text}");
+    }
     let y = |needle: &str| text.lines().position(|line| line.contains(needle)).unwrap();
-    assert!(y("▾ gabe-os") < y("OK p/ criar TST23"));
-    assert!(y("OK p/ criar TST23") < y("Parado dois"));
-    // Band: what a waiting (esp) agent waits on, and its time.
-    ends("Parado dois · CI do PR", "2h");
-    // Collapsed bands show only the count of agents waiting on the user.
-    ends(" ▾ gabe-os", "➜1 1 agentes");
-    ends(" ▸ a4d", "➜1 2 agentes");
-    ends(" ▸ brez", "➜1 3 agentes");
-    assert!(!text.contains("ouvir 2 áudios"), "{text}");
+    assert!(y("▾ gabe-os") < y("Parado um"));
+    assert!(y("Parado um") < y("Parado dois"));
+    // Headers count every agent waiting on the user, collapsed or not.
+    ends(" ▾ gabe-os", "●1 1 agentes");
+    ends(" ▸ a4d", "●1 2 agentes");
+    ends(" ▸ brez", "●1 3 agentes");
     assert!(!text.contains("Doc do Ali"), "{text}");
 
     let palette = state.config.palette.clone();
     let buffer = state.compose(120, 40).unwrap().to_ratatui_buffer().unwrap();
-    // Stopped on the user: red; a step left: peach.
-    let at = cell_of(&mut state, "OK p/ criar TST23", "➜");
+    // Waiting on the user: red icon and label, red count on the header.
+    let at = cell_of(&mut state, "┃ ● Parado um", "●");
     assert_eq!(buffer[at].fg, palette.red);
-    let at = cell_of(&mut state, " ▾ gabe-os", "➜1");
+    let at = cell_of(&mut state, "┃ ● Parado um", "Parado");
     assert_eq!(buffer[at].fg, palette.red);
-    let at = cell_of(&mut state, " ▸ a4d", "➜1");
-    assert_eq!(buffer[at].fg, palette.peach);
-    let at = cell_of(&mut state, "OK p/ criar TST23", "3h");
-    assert_eq!(buffer[at].fg, palette.overlay0);
-    let at = cell_of(&mut state, "CI do PR", "CI");
+    let at = cell_of(&mut state, " ▸ a4d", "●1");
+    assert_eq!(buffer[at].fg, palette.red);
+    // Waiting on someone else: blue clock. Nothing for the user: grey circle.
+    let at = cell_of(&mut state, "Parado dois", "◷");
     assert_eq!(buffer[at].fg, palette.blue);
-
-    // Expanded, the older step is peach and its time turns peach after 24h.
-    let mut projected = with_phases();
-    focus_workspace(&mut projected, "ws_3");
-    let mut state = tree_state_with(projected);
-    let brez = self::text(&mut state);
-    assert!(brez.contains(" ┃ ➜ enviar 7 rascunhos"), "{brez}");
-    let buffer = state.compose(120, 40).unwrap().to_ratatui_buffer().unwrap();
-    let at = cell_of(&mut state, "enviar 7 rascunhos", "➜");
-    assert_eq!(buffer[at].fg, palette.peach);
-    let at = cell_of(&mut state, "enviar 7 rascunhos", "2d");
-    assert_eq!(buffer[at].fg, palette.peach, "older than 24h");
+    let at = cell_of(&mut state, "Focado", "○");
+    assert_eq!(buffer[at].fg, palette.overlay0);
 }
 
 #[test]
-fn a_vez_step_shows_in_peach_under_an_agora_row() {
+fn agora_and_rodando_rows_are_one_line_with_one_color_per_meaning() {
     let mut projected = with_phases();
     set_status(&mut projected, "p_a4d", AgentStatus::Blocked);
     let mut state = tree_state_with(projected);
     let text = text(&mut state);
-    // Blocked: AGORA, with the step below, and no longer counted on its band.
-    assert!(text.contains("\n    ouvir 2 áudios"), "{text}");
-    assert!(!line_with(&text, " ▸ a4d").contains('➜'), "{text}");
+    // Blocked: AGORA, one line, no step below, no longer counted on its band.
+    assert!(text.contains(" ● a4 Doc do Ali"), "{text}");
+    assert!(!text.contains("ouvir 2 áudios"), "{text}");
+    assert!(!line_with(&text, " ▸ a4d").contains('●'), "{text}");
     let palette = state.config.palette.clone();
     let buffer = state.compose(120, 40).unwrap().to_ratatui_buffer().unwrap();
-    let at = cell_of(&mut state, "    ouvir 2 áudios", "ouvir");
-    assert_eq!(buffer[at].fg, palette.peach);
+    let at = cell_of(&mut state, "a4 Doc do Ali", "●");
+    assert_eq!(buffer[at].fg, palette.red);
+    let at = cell_of(&mut state, "os Trabalhando", "◐");
+    assert_eq!(buffer[at].fg, palette.green);
+    // The legend names each color.
+    let at = cell_of(&mut state, "com você", "✦");
+    assert_eq!(buffer[at].fg, palette.yellow);
+    let at = cell_of(&mut state, "com você", "● com");
+    assert_eq!(buffer[at].fg, palette.red);
+    let at = cell_of(&mut state, "com você", "◷");
+    assert_eq!(buffer[at].fg, palette.blue);
+}
+
+#[test]
+fn a_new_agent_reads_as_an_amber_star_in_agora() {
+    // The client shows done once it saw the agent work and then finish.
+    let mut working = spaces();
+    set_status(&mut working, "p_a4d", AgentStatus::Working);
+    let mut state = tree_state_with(working);
+    let mut finished = spaces();
+    set_status(&mut finished, "p_a4d", AgentStatus::Done);
+    finished
+        .agents
+        .iter_mut()
+        .find(|agent| agent.pane_id == "p_a4d")
+        .unwrap()
+        .state_change_seq = 2;
+    state.set_snapshot(Box::new(finished));
+    let text = text(&mut state);
+    let palette = state.config.palette.clone();
+    let buffer = state.compose(120, 40).unwrap().to_ratatui_buffer().unwrap();
+    assert!(text.contains(" ✦ a4 Doc do Ali"), "{text}");
+    let at = cell_of(&mut state, "a4 Doc do Ali", "✦");
+    assert_eq!(buffer[at].fg, palette.yellow);
 }
 
 #[test]
