@@ -991,6 +991,7 @@ impl ClientShellState {
         let workspace_id = self.snapshot.as_deref().and_then(|snapshot| {
             let target = snapshot.tabs.iter().find(|tab| tab.tab_id == tab_id)?;
             (self.config.confirm_close
+                && !self.config.keep_empty_workspaces
                 && !snapshot
                     .tabs
                     .iter()

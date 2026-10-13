@@ -1380,8 +1380,8 @@ pub(super) mod test_support {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::detect::{Agent, AgentState};
     use crate::api::schema::{PaneTarget, TabTarget};
+    use crate::detect::{Agent, AgentState};
 
     #[cfg(unix)]
     fn init_repo(path: &std::path::Path) {
@@ -2257,10 +2257,20 @@ mod tests {
         app.state.workspaces = vec![workspace];
         app.state.ensure_test_terminals();
 
-        app.handle_internal_event(AppEvent::PaneDied { pane_id });
+        app.handle_internal_event(AppEvent::PaneDied {
+            pane_id,
+            exit_reason: crate::platform::ChildExitReason::Exited,
+        });
 
-        assert_eq!(app.state.workspaces.len(), 1, "last pane exit must not close the workspace");
-        assert!(app.find_pane(pane_id).is_some(), "the pane stays attached with a fresh shell");
+        assert_eq!(
+            app.state.workspaces.len(),
+            1,
+            "last pane exit must not close the workspace"
+        );
+        assert!(
+            app.find_pane(pane_id).is_some(),
+            "the pane stays attached with a fresh shell"
+        );
 
         for (_, runtime) in app.terminal_runtimes.drain() {
             runtime.shutdown();
@@ -2336,7 +2346,11 @@ mod tests {
         let rect = |id| panes.iter().find(|pane| pane.id == id).unwrap().rect;
         assert_eq!(rect(pane_id).width, 100, "the new pane spans the whole tab");
         assert!(rect(pane_id).y > rect(left).y && rect(pane_id).y > rect(right).y);
-        assert_eq!(rect(left).y, rect(right).y, "the two above stay side by side");
+        assert_eq!(
+            rect(left).y,
+            rect(right).y,
+            "the two above stay side by side"
+        );
         assert_eq!(home_of(&app, pane_id), Some(app.public_workspace_id(0)));
 
         for (_, runtime) in app.terminal_runtimes.drain() {
@@ -2415,9 +2429,20 @@ mod tests {
         let response = app.handle_tab_close("t".into(), TabTarget { tab_id });
 
         assert!(!response.contains("\"error\""), "{response}");
-        assert_eq!(app.state.workspaces.len(), 1, "closing the last tab must not close the workspace");
-        assert_eq!(app.state.workspaces[0].tabs.len(), 1, "a fresh tab replaces the closed one");
-        assert!(app.find_pane(pane_id).is_none(), "the closed tab's pane is gone");
+        assert_eq!(
+            app.state.workspaces.len(),
+            1,
+            "closing the last tab must not close the workspace"
+        );
+        assert_eq!(
+            app.state.workspaces[0].tabs.len(),
+            1,
+            "a fresh tab replaces the closed one"
+        );
+        assert!(
+            app.find_pane(pane_id).is_none(),
+            "the closed tab's pane is gone"
+        );
 
         for (_, runtime) in app.terminal_runtimes.drain() {
             runtime.shutdown();
@@ -2425,7 +2450,8 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn moving_last_pane_to_another_workspace_keeps_workspace_when_keep_empty_workspaces_is_on() {
+    async fn moving_last_pane_to_another_workspace_keeps_workspace_when_keep_empty_workspaces_is_on(
+    ) {
         let (mut app, pane_id) = keep_empty_test_app();
         let mut other = crate::workspace::Workspace::test_new("other");
         other.identity_cwd = std::env::temp_dir();
@@ -2447,9 +2473,21 @@ mod tests {
         );
 
         assert!(!response.contains("\"error\""), "{response}");
-        assert_eq!(app.state.workspaces.len(), 2, "the source workspace must survive the move");
-        assert_eq!(app.state.workspaces[0].tabs.len(), 1, "a fresh tab replaces the moved pane");
-        assert_eq!(app.state.workspaces[1].tabs.len(), 2, "the pane arrives as its own tab");
+        assert_eq!(
+            app.state.workspaces.len(),
+            2,
+            "the source workspace must survive the move"
+        );
+        assert_eq!(
+            app.state.workspaces[0].tabs.len(),
+            1,
+            "a fresh tab replaces the moved pane"
+        );
+        assert_eq!(
+            app.state.workspaces[1].tabs.len(),
+            2,
+            "the pane arrives as its own tab"
+        );
         assert_eq!(app.state.active, Some(0), "the viewer is not pulled away");
 
         for (_, runtime) in app.terminal_runtimes.drain() {
@@ -2467,8 +2505,16 @@ mod tests {
         let response = app.handle_pane_close("p".into(), target);
 
         assert!(!response.contains("\"error\""), "{response}");
-        assert_eq!(app.state.workspaces.len(), 1, "closing the last pane must not close the workspace");
-        assert_eq!(app.state.workspaces[0].tabs.len(), 1, "a fresh tab replaces the closed one");
+        assert_eq!(
+            app.state.workspaces.len(),
+            1,
+            "closing the last pane must not close the workspace"
+        );
+        assert_eq!(
+            app.state.workspaces[0].tabs.len(),
+            1,
+            "a fresh tab replaces the closed one"
+        );
         assert!(app.find_pane(pane_id).is_none(), "the closed pane is gone");
 
         for (_, runtime) in app.terminal_runtimes.drain() {
@@ -2491,9 +2537,15 @@ mod tests {
         app.state.workspaces = vec![workspace];
         app.state.ensure_test_terminals();
 
-        app.handle_internal_event(AppEvent::PaneDied { pane_id });
+        app.handle_internal_event(AppEvent::PaneDied {
+            pane_id,
+            exit_reason: crate::platform::ChildExitReason::Exited,
+        });
 
-        assert!(app.state.workspaces.is_empty(), "default keeps upstream behavior");
+        assert!(
+            app.state.workspaces.is_empty(),
+            "default keeps upstream behavior"
+        );
     }
 
     #[tokio::test]

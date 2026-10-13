@@ -239,3 +239,14 @@ fn last_tab_close_preserves_parent_group_and_linked_workspace_scope() {
         }
     }
 }
+
+#[test]
+fn last_tab_close_skips_workspace_confirmation_with_keep_empty_workspaces() {
+    for menu in [false, true] {
+        let mut state = close_state(true, 1);
+        state.config.keep_empty_workspaces = true;
+        let requested = request_close(&mut state, menu);
+        assert!(state.overlay.is_none());
+        assert_tab_close(&requested);
+    }
+}
