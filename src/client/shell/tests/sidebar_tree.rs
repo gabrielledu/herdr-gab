@@ -915,9 +915,10 @@ fn renders_waiting_agents_in_red_in_their_band_with_counts_on_the_headers() {
     assert!(!text.contains("PENDENTE"), "{text}");
     ends(" RODANDO", "2");
     ends("os Trabalhando", "agora");
-    // The focused band lists the waiting agent first, by its label, without step or time.
-    ends(" ┃ ● Parado um", "Parado um");
-    for hidden in ["OK p/ criar TST23", "CI do PR", "3h", "2h"] {
+    // The focused band lists the waiting agent first, by its label, with its time.
+    ends(" ┃ ● Parado um", "3h");
+    ends(" ┃ ◷ Parado dois", "2h");
+    for hidden in ["OK p/ criar TST23", "CI do PR"] {
         assert!(!text.contains(hidden), "{hidden:?}\n{text}");
     }
     let y = |needle: &str| text.lines().position(|line| line.contains(needle)).unwrap();
@@ -943,6 +944,19 @@ fn renders_waiting_agents_in_red_in_their_band_with_counts_on_the_headers() {
     assert_eq!(buffer[at].fg, palette.blue);
     let at = cell_of(&mut state, "Focado", "○");
     assert_eq!(buffer[at].fg, palette.overlay0);
+    let at = cell_of(&mut state, "┃ ● Parado um", "3h");
+    assert_eq!(buffer[at].fg, palette.overlay0);
+
+    // Older than 24 hours: the time turns peach in the band too.
+    let mut projected = with_phases();
+    focus_workspace(&mut projected, "ws_3");
+    let mut state = tree_state_with(projected);
+    let brez = self::text(&mut state);
+    let line = line_with(&brez, "┃ ● Heaven Sent");
+    assert!(line.trim_end_matches([' ', '│']).ends_with("2d"), "{brez}");
+    let buffer = state.compose(120, 40).unwrap().to_ratatui_buffer().unwrap();
+    let at = cell_of(&mut state, "┃ ● Heaven Sent", "2d");
+    assert_eq!(buffer[at].fg, palette.peach);
 }
 
 #[test]

@@ -13,7 +13,7 @@
 //!   Expanding a band lists, behind a `┃` rail, the agents of that space that
 //!   are not above, so no agent appears twice: first the ones waiting for the
 //!   user (`$precisa`, `fase=bloq` or `fase=vez`), most recent first, then the
-//!   rest. Bands start collapsed except the one holding the focused pane; a
+//!   rest, each row with its elapsed time. Bands start collapsed except the one holding the focused pane; a
 //!   manual toggle sticks for the session.
 //! * `PARADOS`: spaces without agents, one compact row each.
 //! * A legend above the footer.
@@ -24,9 +24,9 @@
 //!
 //! The `fase` and `ult` tokens come from Gab HQ (`ult` is the epoch
 //! second of the session's last message); a working agent keeps a stale
-//! `fase`, so the bar ignores `fase` while it works. Elapsed time (AGORA and
-//! RODANDO) reads `agora`, `Nmin`, `Nh` or `Nd` and turns peach after 24 hours; the client
-//! repaints once a minute while this layout is on. All of this is client
+//! `fase`, so the bar ignores `fase` while it works. Elapsed time, on the
+//! right of every agent row, reads `agora`, `Nmin`, `Nh` or `Nd` and turns
+//! peach after 24 hours; the client repaints once a minute while this layout is on. All of this is client
 //! presentation state.
 
 use ratatui::style::Color;
@@ -559,6 +559,7 @@ enum RenderedRow {
         focused: bool,
         /// The agent's label.
         text: String,
+        elapsed: Elapsed,
     },
     Header {
         workspace_index: usize,
@@ -573,6 +574,7 @@ enum RenderedRow {
         row: AgentRow,
         /// Waiting on someone else (`fase=esp`): blue clock.
         waits_on_other: bool,
+        elapsed: Elapsed,
     },
     ParkedTitle,
     Parked {
@@ -720,6 +722,7 @@ fn rendered_rows(
                         pane_id: pane_id.clone(),
                         focused: agent.focused,
                         text,
+                        elapsed: agent_elapsed(agent, now),
                     }
                 }
                 TreeRow::Header {
@@ -738,6 +741,7 @@ fn rendered_rows(
                         client: client?,
                         row: tree_agent_row(snapshot, pane_id, config)?,
                         waits_on_other: fase(agent) == Some(Fase::Esp),
+                        elapsed: agent_elapsed(agent, now),
                     }
                 }
                 TreeRow::ParkedTitle => RenderedRow::ParkedTitle,
@@ -909,8 +913,18 @@ pub(super) fn render_sidebar_tree(
                 pane_id,
                 focused,
                 text,
+                elapsed,
             } => {
-                render_pending_row(buffer, rect, *client, text, *focused, selected, palette);
+                render_pending_row(
+                    buffer,
+                    rect,
+                    *client,
+                    text,
+                    elapsed.as_ref(),
+                    *focused,
+                    selected,
+                    palette,
+                );
                 hits.agents.push((rect, pane_id.clone()));
             }
             RenderedRow::Header {
@@ -944,6 +958,7 @@ pub(super) fn render_sidebar_tree(
                 client,
                 row,
                 waits_on_other,
+                elapsed,
             } => {
                 render_band_agent(
                     buffer,
@@ -951,6 +966,7 @@ pub(super) fn render_sidebar_tree(
                     row,
                     *client,
                     *waits_on_other,
+                    elapsed.as_ref(),
                     selected,
                     config,
                 );
@@ -1221,13 +1237,15 @@ fn render_agora_row(
     }
 }
 
-/// "┃ ● label": an agent of the band that waits for the user, in red.
+/// "┃ ● label      5h": an agent of the band that waits for the user, in red,
+/// with its elapsed time.
 #[allow(clippy::too_many_arguments)]
 fn render_pending_row(
     buffer: &mut Buffer,
     rect: Rect,
     client: Color,
     text: &str,
+    elapsed: Option<&(String, bool)>,
     focused: bool,
     selected: bool,
     palette: &Palette,
@@ -1254,7 +1272,7 @@ fn render_pending_row(
         spans,
         &move |width| vec![Span::styled(crate::ui::truncate_end(&text, width), style)],
         None,
-        None,
+        elapsed,
         palette,
     );
     let background = if selected {
@@ -1377,9 +1395,8 @@ fn tree_icon(status: crate::api::schema::AgentStatus, palette: &Palette) -> (&'s
     }
 }
 
-/// "┃ ○ label": a rail in the client color, then the
-/// configured agent rows; the first one carries what a waiting (`fase=esp`)
-/// agent waits on and the elapsed time.
+/// "┃ ○ label      5h": a rail in the client color, then the configured agent
+/// rows; the first one carries the elapsed time.
 #[allow(clippy::too_many_arguments)]
 fn render_band_agent(
     buffer: &mut Buffer,
@@ -1387,6 +1404,7 @@ fn render_band_agent(
     row: &AgentRow,
     client: Color,
     waits_on_other: bool,
+    elapsed: Option<&(String, bool)>,
     selected: bool,
     config: &ClientShellConfig,
 ) {
@@ -1429,7 +1447,7 @@ fn render_band_agent(
                     )
                 },
                 None,
-                None,
+                elapsed,
                 palette,
             );
             continue;
