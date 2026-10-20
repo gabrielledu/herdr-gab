@@ -482,9 +482,9 @@ pub enum SidebarLayoutConfig {
     /// Spaces panel on top, agents panel below (upstream behaviour).
     #[default]
     Split,
-    /// One panel: active agents under "AGORA", agents that left a step for the
-    /// user under "PENDENTE COM VOCÊ", one collapsible band per space with the
-    /// rest, spaces without agents under "PARADOS". `"bands"` is accepted as an
+    /// One panel: new and blocked agents under "AGORA", working ones under
+    /// "RODANDO", one collapsible band per space with all of its agents,
+    /// spaces without agents under "PARADOS". `"bands"` is accepted as an
     /// alias.
     #[serde(alias = "bands")]
     Tree,
