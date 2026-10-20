@@ -10,10 +10,11 @@
 //! * One band per space that has agents, the space with the most recent
 //!   activity first: a header tinted with the client color, `▸/▾ name`, how
 //!   many agents wait for the user (`●N`) and the space summary (`$resumo`).
-//!   Expanding a band lists, behind a `┃` rail, the agents of that space that
-//!   are not above, so no agent appears twice: first the ones waiting for the
-//!   user (`$precisa`, `fase=bloq` or `fase=vez`), most recent first, then the
-//!   rest, each row with its elapsed time. Bands start collapsed except the one holding the focused pane; a
+//!   Expanding a band lists, behind a `┃` rail, every agent of that space,
+//!   also the ones already in AGORA or RODANDO (Gabe, 20/10/2026: opening a
+//!   client must show all of it): first the ones waiting for the user
+//!   (blocked, `$precisa`, `fase=bloq` or `fase=vez`), most recent first, then
+//!   the rest, each row with its elapsed time. Bands start collapsed except the one holding the focused pane; a
 //!   manual toggle sticks for the session.
 //! * `PARADOS`: spaces without agents, one compact row each.
 //! * A legend above the footer.
@@ -55,11 +56,12 @@ const PARKED_TITLE: &str = " PARADOS";
 /// Elapsed time turns peach from this age on.
 const OLD_AFTER_SECS: u64 = 24 * 3600;
 
-/// The navigate cursor on an agent row (AGORA or band), beyond the space's
-/// band header or PARADOS row.
+/// The navigate cursor on an agent row, beyond the space's band header or
+/// PARADOS row. `band` tells the band copy of an agent from its AGORA or
+/// RODANDO copy.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(super) enum TreeCursor {
-    Agent(String),
+    Agent { pane_id: String, band: bool },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -125,8 +127,10 @@ impl TreeRow {
     }
 
     fn cursor(&self) -> Option<TreeCursor> {
-        self.pane_id()
-            .map(|pane_id| TreeCursor::Agent(pane_id.to_owned()))
+        self.pane_id().map(|pane_id| TreeCursor::Agent {
+            pane_id: pane_id.to_owned(),
+            band: !matches!(self, Self::Agora { .. }),
+        })
     }
 
     fn navigable(&self) -> bool {
@@ -232,7 +236,7 @@ fn recency(agent: &ClientShellAgent) -> Option<u64> {
 }
 
 /// AGORA: blocked, done (unseen) or working. An idle agent that waits for the
-/// user was already seen and goes to PENDENTE instead.
+/// user was already seen and is listed only in its band.
 pub(super) fn in_now(agent: &ClientShellAgent) -> bool {
     in_agora(agent.agent_status)
 }
@@ -242,10 +246,12 @@ pub(super) fn waits_on_user(agent: &ClientShellAgent) -> bool {
     !working(agent) && (token_of(agent, "precisa").is_some() || fase(agent) == Some(Fase::Bloq))
 }
 
-/// Outside AGORA, stopped on the user or with a step left: listed first in
-/// its band and counted on the band header.
+/// Blocked, stopped on the user or with a step left: listed first in its band
+/// and counted on the band header, whether or not it is also in AGORA.
 pub(super) fn is_pending(agent: &ClientShellAgent) -> bool {
-    !in_now(agent) && (waits_on_user(agent) || fase(agent) == Some(Fase::Vez))
+    agent.agent_status == crate::api::schema::AgentStatus::Blocked
+        || waits_on_user(agent)
+        || fase(agent) == Some(Fase::Vez)
 }
 
 /// "agora" under a minute, then "Nmin", "Nh", "Nd" (rounded down).
@@ -378,10 +384,8 @@ pub(super) fn tree_rows(snapshot: &ClientShellSnapshot, tree: &SidebarTreeState)
             expanded,
         });
         if expanded {
-            let (mut waiting, mut rest): (Vec<_>, Vec<_>) = agents
-                .into_iter()
-                .filter(|agent| !in_now(agent))
-                .partition(|agent| is_pending(agent));
+            let (mut waiting, mut rest): (Vec<_>, Vec<_>) =
+                agents.into_iter().partition(|agent| is_pending(agent));
             waiting.sort_by_key(|agent| Reverse(recency(agent)));
             rest.sort_by_key(|agent| Reverse(recency(agent)));
             rows.extend(waiting.into_iter().map(|agent| TreeRow::Pending {
@@ -1373,7 +1377,7 @@ fn render_band_header(
     }
 }
 
-/// How many agents of the space wait for the user outside AGORA.
+/// How many agents of the space wait for the user, AGORA included.
 fn workspace_waiting(snapshot: &ClientShellSnapshot, workspace_id: &str) -> usize {
     snapshot
         .agents
@@ -1719,11 +1723,10 @@ impl ClientShellState {
             .iter()
             .any(|agent| agent.workspace_id == workspace_id);
         // Only a band row (an agent listed under its header) climbs to the header.
-        let in_band = self.navigate_tree_item.as_ref().is_some_and(|cursor| {
-            tree_rows(snapshot, &self.sidebar_tree).iter().any(|row| {
-                matches!(row, TreeRow::Agent { .. }) && row.cursor().as_ref() == Some(cursor)
-            })
-        });
+        let in_band = matches!(
+            self.navigate_tree_item,
+            Some(TreeCursor::Agent { band: true, .. })
+        );
         let on_header = has_band && self.navigate_tree_item.is_none();
         let expanded = self.sidebar_tree.is_expanded(snapshot, &workspace_id);
         match code {
@@ -1749,7 +1752,7 @@ impl ClientShellState {
     /// Enter on an agent row (AGORA, PENDENTE or band) focuses that agent, like
     /// a click.
     pub(super) fn accept_navigate_tree_item(&mut self, outcome: &mut ClientShellInput) -> bool {
-        let Some(TreeCursor::Agent(pane_id)) = self.navigate_tree_item.take() else {
+        let Some(TreeCursor::Agent { pane_id, .. }) = self.navigate_tree_item.take() else {
             return false;
         };
         let valid = self.tree_layout_active()
