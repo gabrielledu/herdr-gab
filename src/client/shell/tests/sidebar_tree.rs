@@ -257,7 +257,7 @@ fn a_seen_agent_waiting_on_the_user_leaves_agora_and_stays_in_its_band() {
     let mut projected = spaces();
     let mut state = tree(&projected);
     state.set_expanded("ws_2", true);
-    // Seen (idle) and stopped on the user: listed first in its band, not in AGORA.
+    // Seen (idle) and stopped on the user: listed in its band, not in AGORA.
     set_token(&mut projected, "p_idle2", "fase", "bloq");
     set_token(&mut projected, "p_a4d", "precisa", "login no Meta");
     // Not seen yet (done): AGORA, whatever the phase.
@@ -271,7 +271,8 @@ fn a_seen_agent_waiting_on_the_user_leaves_agora_and_stays_in_its_band() {
         pending(&projected, &state),
         ["p_block", "p_done", "p_idle2", "p_a4d"]
     );
-    assert_eq!(band(&projected, &state, 0)[0], "p_block");
+    // By time only: the working agent ("now") leads, not the blocked one.
+    assert_eq!(band(&projected, &state, 0)[0], "p_work");
     assert_eq!(band(&projected, &state, 1), ["p_a4d"]);
 
     // Looking at the done agent turns it idle: out of AGORA, into its band.
@@ -290,7 +291,7 @@ fn a_seen_agent_waiting_on_the_user_leaves_agora_and_stays_in_its_band() {
 }
 
 #[test]
-fn bands_list_waiting_agents_first_most_recent_first_and_every_agent_once() {
+fn bands_list_every_agent_once_by_time_only_most_recent_first() {
     let mut projected = spaces();
     let mut state = tree(&projected);
     for workspace in ["ws_1", "ws_2", "ws_3"] {
@@ -305,13 +306,20 @@ fn bands_list_waiting_agents_first_most_recent_first_and_every_agent_once() {
     set_token(&mut projected, "p_focus", "ult", "4000");
     set_token(&mut projected, "p_idle1", "ult", "9000");
     set_token(&mut projected, "p_brez_idle", "fase", "vez");
-    // Waiting first (most recent first), then the rest, even if more recent;
-    // working agents lead the rest.
+    // Time only (Gabe, 21/10/2026): waiting agents are not pulled ahead of
+    // more recent ones; working is "now", agents without `ult` go last.
     assert_eq!(
         band(&projected, &state, 0),
-        ["p_focus", "p_idle2", "p_block", "p_work", "p_idle1", "p_done"]
+        ["p_work", "p_idle1", "p_focus", "p_idle2", "p_block", "p_done"]
     );
-    assert_eq!(band(&projected, &state, 2), ["p_brez_idle", "p_brez"]);
+    // Waiting agents keep their red row wherever time puts them.
+    assert_eq!(
+        pending(&projected, &state)[..3],
+        ["p_focus", "p_idle2", "p_block"]
+    );
+    set_token(&mut projected, "p_brez", "ult", "5000");
+    set_token(&mut projected, "p_brez_idle", "ult", "2000");
+    assert_eq!(band(&projected, &state, 2), ["p_brez", "p_brez_idle"]);
     let listed = (0..3)
         .flat_map(|workspace| band(&projected, &state, workspace))
         .collect::<Vec<_>>();
@@ -449,7 +457,7 @@ fn expanded_bands_hold_every_agent_of_their_space_once() {
     assert_eq!(listed.len(), projected.agents.len());
     assert_eq!(
         band(&projected, &state, 0),
-        ["p_block", "p_work", "p_idle1", "p_focus", "p_done", "p_idle2"]
+        ["p_work", "p_idle1", "p_focus", "p_block", "p_done", "p_idle2"]
     );
     assert_eq!(band(&projected, &state, 2), ["p_brez", "p_brez_idle"]);
 }
@@ -830,10 +838,10 @@ fn navigate_mode_walks_agora_bands_and_parked_rows_in_visual_order() {
     // The band copies of p_block and p_work are their own stops, apart from
     // the AGORA and RODANDO ones.
     let expected = [
-        on("ws_1", Some("p_block")),
         on("ws_1", Some("p_work")),
         on("ws_1", Some("p_idle1")),
         on("ws_1", Some("p_focus")),
+        on("ws_1", Some("p_block")),
         on("ws_1", Some("p_done")),
         on("ws_1", Some("p_idle2")),
         on("ws_3", None),
@@ -940,7 +948,7 @@ fn renders_waiting_agents_in_red_in_their_band_with_counts_on_the_headers() {
     assert!(!text.contains("PENDENTE"), "{text}");
     ends(" RODANDO", "2");
     ends("os Trabalhando", "agora");
-    // The focused band lists the waiting agent first, by its label, with its time.
+    // The focused band lists the waiting agent by its label, with its time.
     ends(" ┃ ● Parado um", "3h");
     ends(" ┃ ◷ Parado dois", "2h");
     for hidden in ["OK p/ criar TST23", "CI do PR"] {
@@ -948,7 +956,8 @@ fn renders_waiting_agents_in_red_in_their_band_with_counts_on_the_headers() {
     }
     let y = |needle: &str| text.lines().position(|line| line.contains(needle)).unwrap();
     assert!(y("▾ gabe-os") < y("Parado um"));
-    assert!(y("Parado um") < y("Parado dois"));
+    // Time only: the more recent agent (2h) sits above the waiting one (3h).
+    assert!(y("Parado dois") < y("Parado um"));
     // Headers count every agent waiting on the user, collapsed or not.
     ends(" ▾ gabe-os", "●2 1 agentes");
     ends(" ▸ a4d", "●1 2 agentes");
@@ -1052,15 +1061,20 @@ fn waiting_rows_focus_drag_and_navigate_like_other_agent_rows() {
         "{sent:?}"
     );
 
-    // Navigate mode: the first row under the band header is the waiting agent.
+    // Navigate mode: the waiting agent is a stop like any band row.
     let mut state = tree_state_with(with_phases());
     key(&mut state, &[0x02]);
     key(&mut state, b"w");
     assert_eq!(cursor(&state), on("ws_1", None));
-    key(&mut state, b"\x1b[B");
+    for _ in 0..8 {
+        key(&mut state, b"\x1b[B");
+        if cursor(&state) == on("ws_1", Some("p_idle1")) {
+            break;
+        }
+    }
     assert_eq!(cursor(&state), on("ws_1", Some("p_idle1")));
     key(&mut state, b"\x1b[B");
-    assert_eq!(cursor(&state), on("ws_1", Some("p_block")));
+    assert_ne!(cursor(&state), on("ws_1", Some("p_idle1")));
     key(&mut state, b"\x1b[A");
     let sent = methods(key(&mut state, b"\r"));
     assert!(
