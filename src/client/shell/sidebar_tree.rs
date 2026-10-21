@@ -12,9 +12,10 @@
 //!   many agents wait for the user (`●N`) and the space summary (`$resumo`).
 //!   Expanding a band lists, behind a `┃` rail, every agent of that space,
 //!   also the ones already in AGORA or RODANDO (Gabe, 20/10/2026: opening a
-//!   client must show all of it): first the ones waiting for the user
-//!   (blocked, `$precisa`, `fase=bloq` or `fase=vez`), most recent first, then
-//!   the rest, each row with its elapsed time. Bands start collapsed except the one holding the focused pane; a
+//!   client must show all of it), by time only, most recent first (Gabe,
+//!   21/10/2026); the ones waiting for the user (blocked, `$precisa`,
+//!   `fase=bloq` or `fase=vez`) are red but not pulled ahead. Each row shows
+//!   its elapsed time. Bands start collapsed except the one holding the focused pane; a
 //!   manual toggle sticks for the session.
 //! * `PARADOS`: spaces without agents, one compact row each.
 //! * A legend above the footer.
@@ -384,17 +385,23 @@ pub(super) fn tree_rows(snapshot: &ClientShellSnapshot, tree: &SidebarTreeState)
             expanded,
         });
         if expanded {
-            let (mut waiting, mut rest): (Vec<_>, Vec<_>) =
-                agents.into_iter().partition(|agent| is_pending(agent));
-            waiting.sort_by_key(|agent| Reverse(recency(agent)));
-            rest.sort_by_key(|agent| Reverse(recency(agent)));
-            rows.extend(waiting.into_iter().map(|agent| TreeRow::Pending {
-                workspace_index,
-                pane_id: agent.pane_id.clone(),
-            }));
-            rows.extend(rest.into_iter().map(|agent| TreeRow::Agent {
-                workspace_index,
-                pane_id: agent.pane_id.clone(),
+            // Time only (Gabe, 21/10/2026): waiting agents keep their red row
+            // but are not pulled ahead of more recent ones.
+            let mut agents = agents;
+            agents.sort_by_key(|agent| Reverse(recency(agent)));
+            rows.extend(agents.into_iter().map(|agent| {
+                let pane_id = agent.pane_id.clone();
+                if is_pending(agent) {
+                    TreeRow::Pending {
+                        workspace_index,
+                        pane_id,
+                    }
+                } else {
+                    TreeRow::Agent {
+                        workspace_index,
+                        pane_id,
+                    }
+                }
             }));
         }
     }
