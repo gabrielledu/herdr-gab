@@ -24,6 +24,12 @@
 //! for the user (icon and label), green `◐` running, blue `◷` waiting on
 //! someone else (`fase=esp`), grey `○` nothing for the user.
 //!
+//! What is left for the user (Gabe, 22/10/2026, option B of the previews): an
+//! agent stopped on the user (`fase=bloq` or `vez`, or `$precisa`) gets a
+//! second line `↳ passo`, in AGORA and in its band. An agent waiting on
+//! someone else shows who (the first word of its `passo`, when it is a name)
+//! in blue where the elapsed time goes.
+//!
 //! The `fase` and `ult` tokens come from Gab HQ (`ult` is the epoch
 //! second of the session's last message); a working agent keeps a stale
 //! `fase`, so the bar ignores `fase` while it works. Elapsed time, on the
@@ -47,6 +53,8 @@ const RUNNING_TITLE: &str = " RODANDO";
 const WAITING_ICON: &str = "●";
 const NEW_ICON: &str = "✦";
 const WAITS_ON_OTHER_ICON: &str = "◷";
+/// Lead of the step line under an agent waiting for the user.
+const STEP_MARK: &str = "↳ ";
 /// Bottom line of the bar: what each color means.
 const LEGEND: [(&str, &str); 3] = [
     (NEW_ICON, "novo"),
@@ -253,6 +261,37 @@ pub(super) fn is_pending(agent: &ClientShellAgent) -> bool {
     agent.agent_status == crate::api::schema::AgentStatus::Blocked
         || waits_on_user(agent)
         || fase(agent) == Some(Fase::Vez)
+}
+
+/// The step left for the user: the `passo` of an agent stopped on the user
+/// (`fase=bloq` or `vez`), else its `$precisa`; none while it works.
+pub(super) fn user_step(agent: &ClientShellAgent) -> Option<String> {
+    if working(agent) {
+        return None;
+    }
+    let passo = match fase(agent) {
+        Some(Fase::Bloq | Fase::Vez) => token_of(agent, "passo"),
+        _ => None,
+    };
+    passo
+        .or_else(|| token_of(agent, "precisa"))
+        .map(str::to_owned)
+}
+
+/// Who an agent waiting on someone else (`fase=esp`) waits for: the first word
+/// of its `passo` when it is a name ("Maria criar a conta" → "Maria").
+pub(super) fn waited_on(agent: &ClientShellAgent) -> Option<String> {
+    if fase(agent) != Some(Fase::Esp) {
+        return None;
+    }
+    let word = token_of(agent, "passo")?
+        .split_whitespace()
+        .next()?
+        .trim_matches(|c: char| !c.is_alphanumeric());
+    word.chars()
+        .next()
+        .filter(|first| first.is_uppercase())
+        .map(|_| word.chars().take(12).collect())
 }
 
 /// "agora" under a minute, then "Nmin", "Nh", "Nd" (rounded down).
@@ -563,6 +602,8 @@ enum RenderedRow {
         row: AgentRow,
         cli: Option<String>,
         elapsed: Elapsed,
+        /// Step left for the user, on a second line.
+        step: Option<String>,
     },
     Pending {
         client: Color,
@@ -571,6 +612,8 @@ enum RenderedRow {
         /// The agent's label.
         text: String,
         elapsed: Elapsed,
+        /// Step left for the user, on a second line.
+        step: Option<String>,
     },
     Header {
         workspace_index: usize,
@@ -586,6 +629,8 @@ enum RenderedRow {
         /// Waiting on someone else (`fase=esp`): blue clock.
         waits_on_other: bool,
         elapsed: Elapsed,
+        /// Who it waits for, shown in blue instead of the elapsed time.
+        waited: Option<String>,
     },
     ParkedTitle,
     Parked {
@@ -598,6 +643,7 @@ impl RenderedRow {
     fn height(&self) -> u16 {
         match self {
             Self::Agent { row, .. } => row.rows.len().clamp(1, u16::MAX as usize) as u16,
+            Self::Agora { step, .. } | Self::Pending { step, .. } => 1 + u16::from(step.is_some()),
             _ => 1,
         }
     }
@@ -703,6 +749,7 @@ fn rendered_rows(
                         client: client?,
                         cli: token_of(agent, "cli").map(str::to_owned),
                         elapsed: agent_elapsed(agent, now),
+                        step: user_step(agent),
                         row,
                     }
                 }
@@ -734,6 +781,7 @@ fn rendered_rows(
                         focused: agent.focused,
                         text,
                         elapsed: agent_elapsed(agent, now),
+                        step: user_step(agent),
                     }
                 }
                 TreeRow::Header {
@@ -753,6 +801,7 @@ fn rendered_rows(
                         row: tree_agent_row(snapshot, pane_id, config)?,
                         waits_on_other: fase(agent) == Some(Fase::Esp),
                         elapsed: agent_elapsed(agent, now),
+                        waited: waited_on(agent),
                     }
                 }
                 TreeRow::ParkedTitle => RenderedRow::ParkedTitle,
@@ -904,6 +953,7 @@ pub(super) fn render_sidebar_tree(
                 row,
                 cli,
                 elapsed,
+                step,
             } => {
                 render_agora_row(
                     buffer,
@@ -913,6 +963,7 @@ pub(super) fn render_sidebar_tree(
                         client: *client,
                         cli: cli.as_deref(),
                         elapsed: elapsed.as_ref(),
+                        step: step.as_deref(),
                     },
                     selected,
                     config,
@@ -925,6 +976,7 @@ pub(super) fn render_sidebar_tree(
                 focused,
                 text,
                 elapsed,
+                step,
             } => {
                 render_pending_row(
                     buffer,
@@ -932,6 +984,7 @@ pub(super) fn render_sidebar_tree(
                     *client,
                     text,
                     elapsed.as_ref(),
+                    step.as_deref(),
                     *focused,
                     selected,
                     palette,
@@ -970,6 +1023,7 @@ pub(super) fn render_sidebar_tree(
                 row,
                 waits_on_other,
                 elapsed,
+                waited,
             } => {
                 render_band_agent(
                     buffer,
@@ -978,6 +1032,7 @@ pub(super) fn render_sidebar_tree(
                     *client,
                     *waits_on_other,
                     elapsed.as_ref(),
+                    waited.as_deref(),
                     selected,
                     config,
                 );
@@ -1096,7 +1151,8 @@ fn elapsed_style(old: bool, palette: &Palette) -> Style {
 }
 
 /// One agent line: `prefix`, a label fitted by `label` to a width, an optional
-/// `· suffix` and the elapsed time right-aligned. The label keeps at least
+/// `· suffix` and the right text (elapsed time or who it waits for)
+/// right-aligned. The label keeps at least
 /// three fifths of the room when the suffix does not fit beside it.
 fn render_agent_line(
     buffer: &mut Buffer,
@@ -1104,7 +1160,7 @@ fn render_agent_line(
     mut spans: Vec<ratatui::text::Span<'static>>,
     label: &dyn Fn(usize) -> Vec<ratatui::text::Span<'static>>,
     suffix: Option<(&str, Style)>,
-    elapsed: Option<&(String, bool)>,
+    right: Option<(&str, Style)>,
     palette: &Palette,
 ) {
     use ratatui::{
@@ -1112,7 +1168,7 @@ fn render_agent_line(
         widgets::{Paragraph, Widget},
     };
     let line = Rect::new(rect.x, rect.y, rect.width, rect.height.min(1));
-    let elapsed_width = elapsed.map_or(0, |(text, _)| text.width() + 1);
+    let elapsed_width = right.map_or(0, |(text, _)| text.width() + 1);
     let available = (line.width as usize)
         .saturating_sub(1)
         .saturating_sub(spans_width(&spans))
@@ -1139,15 +1195,50 @@ fn render_agent_line(
         }
     }
     Paragraph::new(Line::from(spans)).render(line, buffer);
-    if let Some((text, old)) = elapsed.filter(|_| line.width > 2) {
+    if let Some((text, style)) = right.filter(|_| line.width > 2) {
         render::put_right_text(
             buffer,
             Rect::new(line.x, line.y, line.width.saturating_sub(1), 1),
             line.y,
             text,
-            elapsed_style(*old, palette),
+            style,
         );
     }
+}
+
+/// The elapsed time as the right text of an agent line.
+fn elapsed_right<'a>(
+    elapsed: Option<&'a (String, bool)>,
+    palette: &Palette,
+) -> Option<(&'a str, Style)> {
+    elapsed.map(|(text, old)| (text.as_str(), elapsed_style(*old, palette)))
+}
+
+/// "↳ step" on the second line of `rect`, after `lead` (indent and rail).
+fn render_step_line(
+    buffer: &mut Buffer,
+    rect: Rect,
+    mut lead: Vec<ratatui::text::Span<'static>>,
+    step: &str,
+    palette: &Palette,
+) {
+    use ratatui::{
+        text::{Line, Span},
+        widgets::{Paragraph, Widget},
+    };
+    if rect.height < 2 {
+        return;
+    }
+    let line = Rect::new(rect.x, rect.y + 1, rect.width, 1);
+    lead.push(Span::styled(STEP_MARK, Style::default().fg(palette.overlay0)));
+    let room = (line.width as usize)
+        .saturating_sub(1)
+        .saturating_sub(spans_width(&lead));
+    lead.push(Span::styled(
+        crate::ui::truncate_end(step, room),
+        Style::default().fg(palette.subtext0),
+    ));
+    Paragraph::new(Line::from(lead)).render(line, buffer);
 }
 
 /// The configured first row of an agent without its state icon, fitted to a
@@ -1188,6 +1279,7 @@ struct AgoraLine<'a> {
     client: Color,
     cli: Option<&'a str>,
     elapsed: Option<&'a (String, bool)>,
+    step: Option<&'a str>,
 }
 
 /// "◐ os Melhorias para o Remo      3h" and, below, what the agent needs or the
@@ -1233,9 +1325,12 @@ fn render_agora_row(
         spans,
         &label_spans(row, (icon, status_style), name_style, palette),
         None,
-        line.elapsed,
+        elapsed_right(line.elapsed, palette),
         palette,
     );
+    if let Some(step) = line.step {
+        render_step_line(buffer, rect, vec![Span::raw(" ")], step, palette);
+    }
     let background = if selected {
         Some(selection_background(palette))
     } else if row.focused {
@@ -1257,6 +1352,7 @@ fn render_pending_row(
     client: Color,
     text: &str,
     elapsed: Option<&(String, bool)>,
+    step: Option<&str>,
     focused: bool,
     selected: bool,
     palette: &Palette,
@@ -1283,9 +1379,17 @@ fn render_pending_row(
         spans,
         &move |width| vec![Span::styled(crate::ui::truncate_end(&text, width), style)],
         None,
-        elapsed,
+        elapsed_right(elapsed, palette),
         palette,
     );
+    if let Some(step) = step {
+        let lead = vec![
+            Span::raw(" "),
+            Span::styled(RAIL, Style::default().fg(client)),
+            Span::raw(" "),
+        ];
+        render_step_line(buffer, rect, lead, step, palette);
+    }
     let background = if selected {
         Some(selection_background(palette))
     } else if focused {
@@ -1416,6 +1520,7 @@ fn render_band_agent(
     client: Color,
     waits_on_other: bool,
     elapsed: Option<&(String, bool)>,
+    waited: Option<&str>,
     selected: bool,
     config: &ClientShellConfig,
 ) {
@@ -1458,7 +1563,9 @@ fn render_band_agent(
                     )
                 },
                 None,
-                elapsed,
+                waited
+                    .map(|who| (who, Style::default().fg(palette.blue)))
+                    .or_else(|| elapsed_right(elapsed, palette)),
                 palette,
             );
             continue;

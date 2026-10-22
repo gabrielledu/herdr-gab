@@ -2,7 +2,7 @@ use super::*;
 use crate::api::schema::Method;
 use crate::client::shell::sidebar_tree::{
     agent_elapsed, band_background, blend, client_color, elapsed_label, epoch_now, tree_agent_row,
-    tree_rows, SidebarTreeState, TreeCursor, TreeRow,
+    tree_rows, user_step, waited_on, SidebarTreeState, TreeCursor, TreeRow,
 };
 use ratatui::style::Color;
 
@@ -703,6 +703,9 @@ fn renders_agora_bands_and_parked_sections() {
         " PARADOS",
         " ▸ company",
         " ✦ novo  ● com você  ◷ outros",
+        // what the blocked agent needs, under it (option B, 22/10/2026)
+        " ↳ aprovar o deck",
+        " ┃ ↳ aprovar o deck",
         " new",
     ] {
         assert!(text.contains(expected), "missing {expected:?}\n{text}");
@@ -712,7 +715,6 @@ fn renders_agora_bands_and_parked_sections() {
         " agents",
         "Heaven Sent",
         "Doc do Ali",
-        "aprovar o deck",
     ] {
         assert!(
             !text.contains(unexpected),
@@ -950,11 +952,12 @@ fn renders_waiting_agents_in_red_in_their_band_with_counts_on_the_headers() {
     ends("os Trabalhando", "agora");
     // The focused band lists the waiting agent by its label, with its time.
     ends(" ┃ ● Parado um", "3h");
-    ends(" ┃ ◷ Parado dois", "2h");
-    for hidden in ["OK p/ criar TST23", "CI do PR"] {
-        assert!(!text.contains(hidden), "{hidden:?}\n{text}");
-    }
+    // Option B (Gabe, 22/10/2026): the step left for the user sits under the
+    // waiting row; who the agent waits on replaces the time on its row.
     let y = |needle: &str| text.lines().position(|line| line.contains(needle)).unwrap();
+    assert_eq!(y("┃ ↳ OK p/ criar TST23"), y("┃ ● Parado um") + 1, "{text}");
+    ends(" ┃ ◷ Parado dois", "CI");
+    assert!(!text.contains("CI do PR"), "{text}");
     assert!(y("▾ gabe-os") < y("Parado um"));
     // Time only: the more recent agent (2h) sits above the waiting one (3h).
     assert!(y("Parado dois") < y("Parado um"));
@@ -976,6 +979,10 @@ fn renders_waiting_agents_in_red_in_their_band_with_counts_on_the_headers() {
     // Waiting on someone else: blue clock. Nothing for the user: grey circle.
     let at = cell_of(&mut state, "Parado dois", "◷");
     assert_eq!(buffer[at].fg, palette.blue);
+    let at = cell_of(&mut state, "Parado dois", "CI");
+    assert_eq!(buffer[at].fg, palette.blue);
+    let at = cell_of(&mut state, "↳ OK p/", "OK");
+    assert_eq!(buffer[at].fg, palette.subtext0);
     let at = cell_of(&mut state, "Focado", "○");
     assert_eq!(buffer[at].fg, palette.overlay0);
     let at = cell_of(&mut state, "┃ ● Parado um", "3h");
@@ -999,9 +1006,11 @@ fn agora_and_rodando_rows_are_one_line_with_one_color_per_meaning() {
     set_status(&mut projected, "p_a4d", AgentStatus::Blocked);
     let mut state = tree_state_with(projected);
     let text = text(&mut state);
-    // Blocked: AGORA, one line, no step below, still counted on its band.
+    // Blocked with a step left: AGORA, the step on the line below, still
+    // counted on its band.
     assert!(text.contains(" ● a4 Doc do Ali"), "{text}");
-    assert!(!text.contains("ouvir 2 áudios"), "{text}");
+    let y = |needle: &str| text.lines().position(|line| line.contains(needle)).unwrap();
+    assert_eq!(y(" ↳ ouvir 2 áudios"), y(" ● a4 Doc do Ali") + 1, "{text}");
     assert!(line_with(&text, " ▸ a4d").contains("●1"), "{text}");
     let palette = state.config.palette.clone();
     let buffer = state.compose(120, 40).unwrap().to_ratatui_buffer().unwrap();
@@ -1098,4 +1107,34 @@ fn tree_layout_repaints_once_a_minute() {
     split.set_snapshot(Box::new(spaces()));
     assert!(!split.tick_sidebar_clock_at(600));
     assert!(!split.tick_sidebar_clock_at(660));
+}
+
+fn agent_of(snapshot: &ClientShellSnapshot, pane: &str) -> ClientShellAgent {
+    snapshot
+        .agents
+        .iter()
+        .find(|agent| agent.pane_id == pane)
+        .unwrap()
+        .clone()
+}
+
+#[test]
+fn step_and_waited_on_follow_the_phase() {
+    let mut projected = with_phases();
+    // Working: the stale phase says nothing, so no step and no name.
+    set_status(&mut projected, "p_idle1", AgentStatus::Working);
+    assert_eq!(user_step(&agent_of(&projected, "p_idle1")), None);
+    assert_eq!(
+        user_step(&agent_of(&projected, "p_a4d")).as_deref(),
+        Some("ouvir 2 áudios")
+    );
+    // A step that does not start with a name keeps the elapsed time.
+    set_token(&mut projected, "p_idle2", "passo", "aguardar o CI");
+    assert_eq!(user_step(&agent_of(&projected, "p_idle2")), None);
+    assert_eq!(waited_on(&agent_of(&projected, "p_idle2")), None);
+    set_token(&mut projected, "p_idle2", "passo", "Maria criar a conta e Roman ligar no CF");
+    assert_eq!(
+        waited_on(&agent_of(&projected, "p_idle2")).as_deref(),
+        Some("Maria")
+    );
 }
