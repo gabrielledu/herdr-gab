@@ -1230,7 +1230,10 @@ fn render_step_line(
         return;
     }
     let line = Rect::new(rect.x, rect.y + 1, rect.width, 1);
-    lead.push(Span::styled(STEP_MARK, Style::default().fg(palette.overlay0)));
+    lead.push(Span::styled(
+        STEP_MARK,
+        Style::default().fg(palette.overlay0),
+    ));
     let room = (line.width as usize)
         .saturating_sub(1)
         .saturating_sub(spans_width(&lead));

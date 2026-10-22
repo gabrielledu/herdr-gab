@@ -710,12 +710,7 @@ fn renders_agora_bands_and_parked_sections() {
     ] {
         assert!(text.contains(expected), "missing {expected:?}\n{text}");
     }
-    for unexpected in [
-        " spaces",
-        " agents",
-        "Heaven Sent",
-        "Doc do Ali",
-    ] {
+    for unexpected in [" spaces", " agents", "Heaven Sent", "Doc do Ali"] {
         assert!(
             !text.contains(unexpected),
             "unexpected {unexpected:?}\n{text}"
@@ -1132,7 +1127,12 @@ fn step_and_waited_on_follow_the_phase() {
     set_token(&mut projected, "p_idle2", "passo", "aguardar o CI");
     assert_eq!(user_step(&agent_of(&projected, "p_idle2")), None);
     assert_eq!(waited_on(&agent_of(&projected, "p_idle2")), None);
-    set_token(&mut projected, "p_idle2", "passo", "Maria criar a conta e Roman ligar no CF");
+    set_token(
+        &mut projected,
+        "p_idle2",
+        "passo",
+        "Maria criar a conta e Roman ligar no CF",
+    );
     assert_eq!(
         waited_on(&agent_of(&projected, "p_idle2")).as_deref(),
         Some("Maria")
