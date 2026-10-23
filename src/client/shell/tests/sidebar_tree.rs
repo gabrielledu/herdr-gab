@@ -1104,6 +1104,48 @@ fn tree_layout_repaints_once_a_minute() {
     assert!(!split.tick_sidebar_clock_at(660));
 }
 
+#[test]
+fn status_file_shows_on_top_and_is_reread_with_the_minute() {
+    let dir = std::env::temp_dir().join(format!("herdr-status-line-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let path = dir.join("cotas");
+    std::fs::write(&path, "\nC1 4% · C2 33%\nignored\n").unwrap();
+    let mut config = Config::default();
+    config.ui.sidebar.layout = crate::config::SidebarLayoutConfig::Tree;
+    config.ui.sidebar.spaces = toml::from_str(SPACES).unwrap();
+    config.ui.sidebar.tree.status_file = Some(path.display().to_string());
+    config.ui.sidebar_width = 36;
+    let mut state = ClientShellState::new(ClientShellConfig::from_config(&config));
+    state.set_snapshot(Box::new(spaces()));
+    state.set_pane_surface(surface());
+
+    // The first tick reads the file and asks for a repaint.
+    assert!(state.tick_sidebar_clock_at(600));
+    let rows = text(&mut state);
+    let mut lines = rows.lines();
+    assert!(
+        lines.next().unwrap().starts_with(" C1 4% · C2 33%"),
+        "{rows}"
+    );
+    assert!(lines.next().unwrap().starts_with(" AGORA"), "{rows}");
+    assert!(!rows.contains("ignored"));
+    let buffer = state.compose(120, 40).unwrap().to_ratatui_buffer().unwrap();
+    assert_eq!(buffer[(1, 0)].bg, state.config.palette.surface0);
+
+    // Rewritten within the minute: unchanged until the next one.
+    std::fs::write(&path, "C1 5% · C2 34%\n").unwrap();
+    assert!(!state.tick_sidebar_clock_at(630));
+    assert!(text(&mut state).starts_with(" C1 4% · C2 33%"));
+    assert!(state.tick_sidebar_clock_at(660));
+    assert!(text(&mut state).starts_with(" C1 5% · C2 34%"));
+
+    // A missing file drops the line and the tree moves back to the top.
+    std::fs::remove_file(&path).unwrap();
+    assert!(state.tick_sidebar_clock_at(720));
+    assert!(text(&mut state).starts_with(" AGORA"));
+    let _ = std::fs::remove_dir(&dir);
+}
+
 fn agent_of(snapshot: &ClientShellSnapshot, pane: &str) -> ClientShellAgent {
     snapshot
         .agents
