@@ -19,6 +19,9 @@
 //!   manual toggle sticks for the session.
 //! * `PARADOS`: spaces without agents, one compact row each.
 //! * A legend above the footer.
+//! * Optionally, on top, the first line of `ui.sidebar.tree.status_file`
+//!   (Gabe, 23/10/2026: the weekly usage of each Claude account), reread with
+//!   the minute repaint, never while rendering.
 //!
 //! One color per meaning (Gabe, 13/10/2026): amber `✦` new, red `●` waiting
 //! for the user (icon and label), green `◐` running, blue `◷` waiting on
@@ -147,10 +150,22 @@ impl TreeRow {
     }
 }
 
-/// Per-client band state: manual expand/collapse choices by workspace id.
+/// Per-client band state: manual expand/collapse choices by workspace id, and
+/// the status line read from `ui.sidebar.tree.status_file`.
 #[derive(Debug, Default)]
 pub(crate) struct SidebarTreeState {
     manual: HashMap<String, bool>,
+    /// First line of the status file, when there is one with text.
+    status: Option<String>,
+}
+
+/// The first non-blank line of `path`, trimmed; `None` when it cannot be read.
+fn read_status_line(path: &std::path::Path) -> Option<String> {
+    let text = std::fs::read_to_string(path).ok()?;
+    text.lines()
+        .map(str::trim)
+        .find(|line| !line.is_empty())
+        .map(str::to_owned)
 }
 
 /// Blocked, done and working agents go to AGORA.
@@ -327,6 +342,18 @@ pub(super) fn epoch_now() -> u64 {
 
 impl SidebarTreeState {
     /// Drops choices for spaces that no longer exist.
+    pub(super) fn status(&self) -> Option<&str> {
+        self.status.as_deref()
+    }
+
+    /// Rereads the status file; true when the line changed.
+    pub(super) fn refresh_status(&mut self, path: Option<&std::path::Path>) -> bool {
+        let status = path.and_then(read_status_line);
+        let changed = status != self.status;
+        self.status = status;
+        changed
+    }
+
     pub(super) fn reconcile(&mut self, snapshot: &ClientShellSnapshot) {
         self.manual.retain(|workspace_id, _| {
             snapshot
@@ -834,11 +861,23 @@ pub(super) fn render_sidebar_tree(
     if content.is_empty() {
         return;
     }
+    // The status line takes the top row when there is room for it and a few
+    // rows of the tree below.
+    let status = state.sidebar_tree.status().filter(|_| content.height >= 6);
+    let top = u16::from(status.is_some());
+    if let Some(status) = status {
+        render_status_line(
+            buffer,
+            Rect::new(content.x, content.y, content.width, 1),
+            status,
+            palette,
+        );
+    }
     let body = Rect::new(
         content.x,
-        content.y,
+        content.y + top,
         content.width,
-        content.height.saturating_sub(2),
+        content.height.saturating_sub(2 + top),
     );
     hits.workspace_body = body;
 
@@ -1093,6 +1132,19 @@ pub(super) fn render_sidebar_tree(
 
     render_legend(buffer, content, palette);
     render_footer(buffer, content, snapshot, config, hits);
+}
+
+/// The status file's line on a strip of its own at the top of the sidebar.
+fn render_status_line(buffer: &mut Buffer, rect: Rect, status: &str, palette: &Palette) {
+    fill_background(buffer, rect, palette.surface0);
+    render::put_text(
+        buffer,
+        rect.x + 1,
+        rect.y,
+        rect.width.saturating_sub(2),
+        status,
+        Style::default().fg(palette.subtext0).bg(palette.surface0),
+    );
 }
 
 /// " ✦ novo  ● com você  ◷ outros" just above the footer.
@@ -1718,17 +1770,21 @@ impl ClientShellState {
     }
 
     /// [`Self::tick_sidebar_clock`] at `now` (epoch seconds).
+    /// The status file is reread on the first tick and then once a minute.
     pub(super) fn tick_sidebar_clock_at(&mut self, now: u64) -> bool {
         if !self.tree_layout_active() || self.snapshot.is_none() {
             self.sidebar_tree_minute = None;
             return false;
         }
         let minute = now / 60;
-        let changed = self
-            .sidebar_tree_minute
-            .is_some_and(|previous| previous != minute);
-        self.sidebar_tree_minute = Some(minute);
-        changed
+        let previous = self.sidebar_tree_minute.replace(minute);
+        if previous == Some(minute) {
+            return false;
+        }
+        let status_changed = self
+            .sidebar_tree
+            .refresh_status(self.config.tree_status_file.as_deref());
+        previous.is_some() || status_changed
     }
 
     /// A click (press and release without a drag) on a band header expands or

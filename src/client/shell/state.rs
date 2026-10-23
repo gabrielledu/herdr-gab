@@ -26,6 +26,8 @@ pub(crate) struct ClientShellConfig {
     pub(super) sidebar_layout: crate::config::SidebarLayoutConfig,
     /// `ui.sidebar.tree.agent_rows`, resolved like `agents.rows`.
     pub(super) tree_agents: crate::config::AgentsSidebarConfig,
+    /// `ui.sidebar.tree.status_file`, resolved.
+    pub(super) tree_status_file: Option<std::path::PathBuf>,
     pub(super) agent_panel_sort: crate::config::AgentPanelSortConfig,
     pub(super) status_indicators: crate::config::StatusIndicatorStyle,
     pub(super) sound_enabled: bool,

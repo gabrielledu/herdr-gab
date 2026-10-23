@@ -496,6 +496,10 @@ pub enum SidebarLayoutConfig {
 pub struct TreeSidebarConfig {
     #[serde(deserialize_with = "deserialize_sidebar_rows")]
     pub agent_rows: AgentSidebarRows,
+    /// herdr-gab: a text file whose first line shows on top of the tree
+    /// sidebar (`~/` expands to the home directory), reread once a minute.
+    /// Another process writes it, e.g. the weekly usage of each Claude account.
+    pub status_file: Option<String>,
 }
 
 impl Default for TreeSidebarConfig {
@@ -505,11 +509,24 @@ impl Default for TreeSidebarConfig {
                 AgentSidebarToken::StateIcon,
                 AgentSidebarToken::Custom("rotulo".into()),
             ]],
+            status_file: None,
         }
     }
 }
 
 impl TreeSidebarConfig {
+    /// `status_file` with a leading `~/` expanded; `None` when unset or blank.
+    pub(crate) fn status_path(&self) -> Option<std::path::PathBuf> {
+        let raw = self.status_file.as_deref()?.trim();
+        if raw.is_empty() {
+            return None;
+        }
+        match raw.strip_prefix("~/") {
+            Some(rest) => Some(std::path::PathBuf::from(std::env::var_os("HOME")?).join(rest)),
+            None => Some(std::path::PathBuf::from(raw)),
+        }
+    }
+
     /// The child rows as an agents layout, so they resolve like `agents.rows`.
     pub(crate) fn as_agents_config(&self) -> AgentsSidebarConfig {
         AgentsSidebarConfig {
@@ -584,6 +601,7 @@ agent_rows = [["state_icon", { token = "$rotulo", rules = [{ equals = "x", bold 
         .expect("tree sidebar config");
         assert_eq!(config.ui.sidebar.layout, SidebarLayoutConfig::Tree);
         assert_eq!(config.ui.sidebar.tree.agent_rows.len(), 2);
+        assert_eq!(config.ui.sidebar.tree.status_file, None);
         assert_eq!(
             config.ui.sidebar.tree.agent_rows[1],
             vec![AgentSidebarToken::TerminalTitleStripped]
