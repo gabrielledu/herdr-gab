@@ -1023,6 +1023,82 @@ fn agora_and_rodando_rows_are_one_line_with_one_color_per_meaning() {
 }
 
 #[test]
+fn agora_marks_only_sessions_needing_a_reply_with_a_red_icon_and_label() {
+    use AgentStatus::{Blocked, Done, Working};
+    let mut projected = spaces();
+    set_status(&mut projected, "p_a4d", Working);
+    let mut config = Config::default();
+    config.ui.sidebar.tree =
+        toml::from_str(r#"agent_rows = [["state_icon", "$linha_ia"]]"#).unwrap();
+    let palette = ClientShellConfig::from_config(&config).palette;
+    let waiting = ("●", palette.red, palette.red);
+    let new = ("✦", palette.yellow, palette.text);
+    let running = ("◐", palette.green, palette.subtext0);
+    for (status, signals, label, (icon, icon_fg, label_fg)) in [
+        (Done, &[("precisa", "aprovar")][..], "Revisar", waiting),
+        (Done, &[("fase", "bloq")], "Login", waiting),
+        (Done, &[("fase", "vez")], "Sua vez", waiting),
+        (Blocked, &[], "Permitir", waiting),
+        (Done, &[], "Quer que eu siga?", new),
+        (
+            Working,
+            &[("precisa", "aprovar"), ("fase", "vez")],
+            "Em curso",
+            running,
+        ),
+    ] {
+        let mut state = tree_state_with(projected.clone());
+        state.config.tree_agents = config.ui.sidebar.tree.as_agents_config();
+        let mut next = projected.clone();
+        set_status(&mut next, "p_a4d", status);
+        set_token(&mut next, "p_a4d", "linha_ia", label);
+        for &(key, value) in signals {
+            set_token(&mut next, "p_a4d", key, value);
+        }
+        next.agents
+            .iter_mut()
+            .find(|a| a.pane_id == "p_a4d")
+            .unwrap()
+            .state_change_seq = 2;
+        state.set_snapshot(Box::new(next));
+        let buffer = state.compose(120, 40).unwrap().to_ratatui_buffer().unwrap();
+        // This agent's band is collapsed: this is its AGORA (or RODANDO) hit.
+        let (rect, _) = state
+            .hits
+            .agents
+            .iter()
+            .find(|(_, id)| id == "p_a4d")
+            .unwrap();
+        let cells = &buffer.content()[buffer.index_of(rect.x, rect.y)..][..rect.width as usize];
+        let line: String = cells.iter().map(|cell| cell.symbol()).collect();
+        assert!(
+            line.starts_with(&format!(" {icon} a4 {label}")),
+            "{line:?}: icon {:?}, label {:?}",
+            cells[1].fg,
+            cells[6].fg
+        );
+        assert_eq!(cells[1].fg, icon_fg, "{line:?}");
+        assert_eq!(cells[3].fg, Color::Rgb(0xb8, 0x64, 0x3a), "{line:?}");
+        assert!(
+            cells[6..6 + label.chars().count()]
+                .iter()
+                .all(|cell| cell.fg == label_fg),
+            "{line:?}: expected {label_fg:?}"
+        );
+    }
+}
+
+#[test]
+fn a_blocked_agent_without_a_label_shows_its_fallback_name_in_red() {
+    let mut projected = spaces();
+    set_token(&mut projected, "p_block", "rotulo", "");
+    let mut state = tree_state_with(projected);
+    let at = cell_of(&mut state, "● os claude", "claude");
+    let buffer = state.compose(120, 40).unwrap().to_ratatui_buffer().unwrap();
+    assert_eq!(buffer[at].fg, state.config.palette.red);
+}
+
+#[test]
 fn a_new_agent_reads_as_an_amber_star_in_agora() {
     // The client shows done once it saw the agent work and then finish.
     let mut working = spaces();

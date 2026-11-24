@@ -627,6 +627,7 @@ enum RenderedRow {
     Agora {
         client: Color,
         row: AgentRow,
+        pending: bool,
         cli: Option<String>,
         elapsed: Elapsed,
         /// Step left for the user, on a second line.
@@ -774,6 +775,7 @@ fn rendered_rows(
                     let row = tree_agent_row(snapshot, pane_id, config)?;
                     RenderedRow::Agora {
                         client: client?,
+                        pending: is_pending(agent),
                         cli: token_of(agent, "cli").map(str::to_owned),
                         elapsed: agent_elapsed(agent, now),
                         step: user_step(agent),
@@ -990,6 +992,7 @@ pub(super) fn render_sidebar_tree(
             RenderedRow::Agora {
                 client,
                 row,
+                pending,
                 cli,
                 elapsed,
                 step,
@@ -1000,6 +1003,7 @@ pub(super) fn render_sidebar_tree(
                     AgoraLine {
                         row,
                         client: *client,
+                        pending: *pending,
                         cli: cli.as_deref(),
                         elapsed: elapsed.as_ref(),
                         step: step.as_deref(),
@@ -1302,6 +1306,7 @@ fn label_spans<'a>(
     row: &'a AgentRow,
     icon: (&'a str, Style),
     name_style: Style,
+    pending: bool,
     palette: &'a Palette,
 ) -> impl Fn(usize) -> Vec<ratatui::text::Span<'static>> + 'a {
     let tokens = row
@@ -1316,15 +1321,16 @@ fn label_spans<'a>(
         })
         .unwrap_or_default();
     move |width| {
+        // Custom labels (e.g. $linha_ia) and fallback agent names normally
+        // use different styles. Both represent the session name here.
+        let secondary = Style::default().fg(palette.overlay0);
+        let (name, secondary) = if pending {
+            (name_style.fg(palette.red), secondary.fg(palette.red))
+        } else {
+            (name_style, secondary)
+        };
         crate::ui::resolved_token_spans(
-            &tokens,
-            icon,
-            icon.1,
-            name_style,
-            Style::default().fg(palette.overlay0),
-            name_style,
-            palette,
-            width,
+            &tokens, icon, icon.1, name, secondary, name, palette, width,
         )
     }
 }
@@ -1332,6 +1338,7 @@ fn label_spans<'a>(
 struct AgoraLine<'a> {
     row: &'a AgentRow,
     client: Color,
+    pending: bool,
     cli: Option<&'a str>,
     elapsed: Option<&'a (String, bool)>,
     step: Option<&'a str>,
@@ -1351,7 +1358,11 @@ fn render_agora_row(
     use ratatui::text::Span;
     let palette = &config.palette;
     let row = line.row;
-    let (icon, color) = tree_icon(line.row.status, palette);
+    let (icon, color) = if line.pending {
+        (WAITING_ICON, palette.red)
+    } else {
+        tree_icon(row.status, palette)
+    };
     let status_style = Style::default().fg(color);
     let mut spans = vec![
         Span::raw(" "),
@@ -1378,7 +1389,7 @@ fn render_agora_row(
         buffer,
         rect,
         spans,
-        &label_spans(row, (icon, status_style), name_style, palette),
+        &label_spans(row, (icon, status_style), name_style, line.pending, palette),
         None,
         elapsed_right(line.elapsed, palette),
         palette,
