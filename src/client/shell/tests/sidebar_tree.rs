@@ -121,7 +121,7 @@ fn section(snapshot: &ClientShellSnapshot, tree: &SidebarTreeState, running: boo
         .collect()
 }
 
-/// AGORA rows: blocked or done.
+/// AGORA rows: unseen completions or actions for the user.
 fn agora(snapshot: &ClientShellSnapshot, tree: &SidebarTreeState) -> Vec<String> {
     section(snapshot, tree, false)
 }
@@ -229,7 +229,8 @@ fn agora_lists_blocked_and_done_and_rodando_lists_working_across_spaces() {
         .unwrap();
     assert!(matches!(&rows[title - 1], TreeRow::Agora { pane_id, .. } if pane_id == "p_a4d"));
 
-    // Nothing new: one "nada novo" row; nothing working: no RODANDO.
+    // No new completions or outstanding requests: "nada novo", no RODANDO.
+    set_token(&mut projected, "p_block", "precisa", "");
     for agent in &mut projected.agents {
         agent.agent_status = AgentStatus::Idle;
     }
@@ -253,18 +254,19 @@ fn agora_is_most_recent_first_by_ult() {
 }
 
 #[test]
-fn a_seen_agent_waiting_on_the_user_leaves_agora_and_stays_in_its_band() {
+fn actions_stay_in_agora_and_the_band_independently_of_seen_status() {
     let mut projected = spaces();
     let mut state = tree(&projected);
     state.set_expanded("ws_2", true);
-    // Seen (idle) and stopped on the user: listed in its band, not in AGORA.
+    // Seen (idle) and stopped on the user: listed in both places.
     set_token(&mut projected, "p_idle2", "fase", "bloq");
     set_token(&mut projected, "p_a4d", "precisa", "login no Meta");
     // Not seen yet (done): AGORA, whatever the phase.
     set_token(&mut projected, "p_done", "fase", "bloq");
     // Working with a stale phase: RODANDO only.
     set_token(&mut projected, "p_work", "fase", "bloq");
-    assert_eq!(agora(&projected, &state), ["p_block", "p_done"]);
+    let expected = ["p_block", "p_done", "p_idle2", "p_a4d"];
+    assert_eq!(agora(&projected, &state), expected);
     assert_eq!(running(&projected, &state), ["p_work", "p_brez"]);
     // The band lists its waiting agents too, AGORA ones included.
     assert_eq!(
@@ -275,9 +277,9 @@ fn a_seen_agent_waiting_on_the_user_leaves_agora_and_stays_in_its_band() {
     assert_eq!(band(&projected, &state, 0)[0], "p_work");
     assert_eq!(band(&projected, &state, 1), ["p_a4d"]);
 
-    // Looking at the done agent turns it idle: out of AGORA, into its band.
+    // Looking at a completion does not resolve its pending action.
     set_status(&mut projected, "p_done", AgentStatus::Idle);
-    assert_eq!(agora(&projected, &state), ["p_block"]);
+    assert_eq!(agora(&projected, &state), expected);
     assert!(pending(&projected, &state).contains(&"p_done".to_owned()));
     // Other phases leave it a plain band row.
     for fase in ["esp", "ok", "", "outra"] {
@@ -953,14 +955,16 @@ fn renders_waiting_agents_in_red_in_their_band_with_counts_on_the_headers() {
     assert_eq!(y("┃ ↳ OK p/ criar TST23"), y("┃ ● Parado um") + 1, "{text}");
     ends(" ┃ ◷ Parado dois", "CI");
     assert!(!text.contains("CI do PR"), "{text}");
-    assert!(y("▾ gabe-os") < y("Parado um"));
+    assert!(y("▾ gabe-os") < y("┃ ● Parado um"));
     // Time only: the more recent agent (2h) sits above the waiting one (3h).
-    assert!(y("Parado dois") < y("Parado um"));
+    assert!(y("┃ ◷ Parado dois") < y("┃ ● Parado um"));
     // Headers count every agent waiting on the user, collapsed or not.
     ends(" ▾ gabe-os", "●2 1 agentes");
     ends(" ▸ a4d", "●1 2 agentes");
     ends(" ▸ brez", "●1 3 agentes");
-    assert!(!text.contains("Doc do Ali"), "{text}");
+    // The collapsed workspace still has its actionable copy in AGORA.
+    assert!(text.contains("● a4 Doc do Ali"), "{text}");
+    assert!(!text.contains("┃ ● Doc do Ali"), "{text}");
 
     let palette = state.config.palette.clone();
     let buffer = state.compose(120, 40).unwrap().to_ratatui_buffer().unwrap();
@@ -1096,6 +1100,95 @@ fn a_blocked_agent_without_a_label_shows_its_fallback_name_in_red() {
     let at = cell_of(&mut state, "● os claude", "claude");
     let buffer = state.compose(120, 40).unwrap().to_ratatui_buffer().unwrap();
     assert_eq!(buffer[at].fg, state.config.palette.red);
+}
+
+#[test]
+fn viewing_a_completion_keeps_its_action_red_in_agora_and_the_band_until_resolved() {
+    let id = "p_idle1";
+    let mut projected = spaces();
+    set_status(&mut projected, id, AgentStatus::Working);
+    let mut state = tree_state_with(projected.clone());
+    let mut visible = surface();
+    visible.panes[0].pane_id = id.into();
+    set_token(&mut projected, id, "precisa", "aprovar");
+    set_status(&mut projected, id, AgentStatus::Done);
+    projected
+        .agents
+        .iter_mut()
+        .find(|a| a.pane_id == id)
+        .unwrap()
+        .state_change_seq = 2;
+    state.set_snapshot(Box::new(projected.clone()));
+
+    for seen in [false, true] {
+        if seen {
+            state.set_pane_surface(visible.clone());
+        }
+        let rows = text(&mut state);
+        let frame = state.compose(120, 40).unwrap().to_ratatui_buffer().unwrap();
+        for anchor in [" ● os Parado um", " ┃ ● Parado um"] {
+            assert!(
+                rows.contains(anchor),
+                "seen={seen}, missing {anchor:?}\n{rows}"
+            );
+            for needle in ["●", "Parado"] {
+                let at = cell_of(&mut state, anchor, needle);
+                assert_eq!(frame[at].fg, state.config.palette.red, "{anchor}: {needle}");
+            }
+        }
+    }
+    set_token(&mut projected, id, "precisa", "");
+    state.set_snapshot(Box::new(projected));
+    let rows = text(&mut state);
+    assert!(!rows.contains("os Parado um"), "{rows}");
+    assert!(rows.contains("┃ ○ Parado um"), "{rows}");
+}
+
+#[test]
+fn only_working_overrides_an_explicit_request_during_external_wait() {
+    let mut projected = spaces();
+    let id = "p_work";
+    set_token(&mut projected, id, "precisa", "aprovar");
+    set_token(&mut projected, id, "fase", "esp");
+    set_token(&mut projected, id, "passo", "CI do PR");
+    let mut state = tree_state_with(projected.clone());
+    let palette = state.config.palette.clone();
+    let rows = text(&mut state);
+    let buffer = state.compose(120, 40).unwrap().to_ratatui_buffer().unwrap();
+    for anchor in ["◐ os Trabalhando", "┃ ◐ Trabalhando"] {
+        assert!(rows.contains(anchor), "{rows}");
+        assert_eq!(buffer[cell_of(&mut state, anchor, "◐")].fg, palette.green);
+        assert_ne!(
+            buffer[cell_of(&mut state, anchor, "Trabalhando")].fg,
+            palette.red
+        );
+    }
+    // Watching CI and explicitly needing the user are not mutually exclusive.
+    set_status(&mut projected, id, AgentStatus::Idle);
+    let mut state = tree_state_with(projected.clone()); // already seen
+    let rows = text(&mut state);
+    let buffer = state.compose(120, 40).unwrap().to_ratatui_buffer().unwrap();
+    for anchor in ["● os Trabalhando", "┃ ● Trabalhando"] {
+        assert!(rows.contains(anchor), "{rows}");
+        assert_eq!(buffer[cell_of(&mut state, anchor, "●")].fg, palette.red);
+        assert_eq!(
+            buffer[cell_of(&mut state, anchor, "Trabalhando")].fg,
+            palette.red
+        );
+    }
+    // Only the explicit request clears; the same external wait continues.
+    set_token(&mut projected, id, "precisa", "");
+    state.set_snapshot(Box::new(projected));
+    let rows = text(&mut state);
+    assert!(rows.contains("┃ ◷ Trabalhando"), "{rows}");
+    let buffer = state.compose(120, 40).unwrap().to_ratatui_buffer().unwrap();
+    let anchor = "┃ ◷ Trabalhando";
+    assert_eq!(buffer[cell_of(&mut state, anchor, "◷")].fg, palette.blue);
+    assert_ne!(
+        buffer[cell_of(&mut state, anchor, "Trabalhando")].fg,
+        palette.red
+    );
+    assert!(!rows.contains("os Trabalhando"), "{rows}");
 }
 
 #[test]

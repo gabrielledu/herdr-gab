@@ -2,10 +2,10 @@
 //! "tree"`, alias `"bands"`). One scrollable panel replaces the split
 //! spaces/agents panels:
 //!
-//! * `AGORA`: every done (unseen) or blocked agent of every space, most
+//! * `AGORA`: every unseen completion or agent waiting on the user, most
 //!   recent first (by the `ult` token, agents without `ult` last), one line
 //!   each: icon, client code (`$cli`) in the client color, label, elapsed
-//!   time. Seeing a finished agent turns it idle, so it leaves AGORA.
+//!   time. Seeing a completion clears its novelty, not its pending action.
 //! * `RODANDO`: every working agent, same line format. Hidden when empty.
 //! * One band per space that has agents, the space with the most recent
 //!   activity first: a header tinted with the client color, `▸/▾ name`, how
@@ -259,10 +259,10 @@ fn recency(agent: &ClientShellAgent) -> Option<u64> {
     }
 }
 
-/// AGORA: blocked, done (unseen) or working. An idle agent that waits for the
-/// user was already seen and is listed only in its band.
+/// Include unseen completions, actionable agents (even when seen), and
+/// working agents. The latter are partitioned into RODANDO.
 pub(super) fn in_now(agent: &ClientShellAgent) -> bool {
-    in_agora(agent.agent_status)
+    in_agora(agent.agent_status) || is_pending(agent)
 }
 
 /// Stopped on the user: `$precisa` or `fase=bloq`, not while it works.
@@ -270,8 +270,8 @@ pub(super) fn waits_on_user(agent: &ClientShellAgent) -> bool {
     !working(agent) && (token_of(agent, "precisa").is_some() || fase(agent) == Some(Fase::Bloq))
 }
 
-/// Blocked, stopped on the user or with a step left: listed first in its band
-/// and counted on the band header, whether or not it is also in AGORA.
+/// A user action is independent of seen/unseen. Its row is red in both
+/// AGORA and its band, and it contributes to the band header count.
 pub(super) fn is_pending(agent: &ClientShellAgent) -> bool {
     agent.agent_status == crate::api::schema::AgentStatus::Blocked
         || waits_on_user(agent)
